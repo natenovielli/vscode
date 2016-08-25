@@ -10,24 +10,34 @@ import strings = require('vs/base/common/strings');
 import snippets = require('vs/editor/contrib/snippet/common/snippet');
 import {Range} from 'vs/editor/common/core/range';
 import {SnippetController} from 'vs/editor/contrib/snippet/common/snippetController';
+import {ExtensionsRegistry} from 'vs/platform/extensions/common/extensionsRegistry';
+
 
 import emmet = require('emmet');
+
+interface ModeScopeMap {
+    [key: string]: string;
+}
+
+let modeScopesMap: ModeScopeMap = null;
 
 export class EditorAccessor implements emmet.Editor {
 
 	editor: ICommonCodeEditor;
+	syntaxProfiles: any;
+
 	private _hasMadeEdits: boolean;
 
 	emmetSupportedModes = ['html', 'razor', 'css', 'less', 'sass', 'scss', 'stylus', 'xml', 'xsl', 'jade', 'handlebars', 'ejs', 'hbs', 'jsx', 'tsx', 'erb', 'php', 'twig'];
 
-	constructor(editor: ICommonCodeEditor) {
+	constructor(editor: ICommonCodeEditor, syntaxProfiles: any) {
 		this.editor = editor;
+		this.syntaxProfiles = syntaxProfiles;
 		this._hasMadeEdits = false;
 	}
 
 	public isEmmetEnabledMode(): boolean {
-		let syntax = this.getSyntax();
-		return (this.emmetSupportedModes.indexOf(syntax) !== -1);
+		return this.emmetSupportedModes.indexOf(this.getSyntax()) !== -1;
 	}
 
 	public getSelectionRange(): emmet.Range {
@@ -87,8 +97,7 @@ export class EditorAccessor implements emmet.Editor {
 		}
 
 		let range = new Range(startPosition.lineNumber, startPosition.column, endPosition.lineNumber, endPosition.column);
-		let snippet = snippets.CodeSnippet.convertExternalSnippet(value, snippets.ExternalSnippetType.EmmetSnippet);
-		let codeSnippet = new snippets.CodeSnippet(snippet);
+		let codeSnippet = snippets.CodeSnippet.fromEmmet(value);
 		SnippetController.get(this.editor).runWithReplaceRange(codeSnippet, range);
 	}
 
@@ -120,6 +129,13 @@ export class EditorAccessor implements emmet.Editor {
 		let position = this.editor.getSelection().getStartPosition();
 		let modeId = this.editor.getModel().getModeIdAtPosition(position.lineNumber, position.column);
 		let syntax = modeId.split('.').pop();
+
+		// user can overwrite the syntax using the emmet syntaxProfiles setting
+		let profile = this.getSyntaxProfile(syntax);
+		if (profile) {
+			return profile;
+		}
+
 		if (/\b(razor|handlebars|erb|php|hbs|ejs|twig)\b/.test(syntax)) { // treat like html
 			return 'html';
 		}
@@ -129,7 +145,53 @@ export class EditorAccessor implements emmet.Editor {
 		if (syntax === 'sass-indented') { // map sass-indented to sass
 			return 'sass';
 		}
+		syntax = this.checkParentMode(syntax);
+
 		return syntax;
+	}
+
+	private getSyntaxProfile(syntax: string): string {
+		const profile = this.syntaxProfiles[syntax];
+		if (profile && typeof profile === 'string') {
+			return profile;
+		}
+	}
+
+	private checkParentMode(syntax: string): string {
+		if (!modeScopesMap) {
+			modeScopesMap = this.getModeScopeMap();
+		}
+		let languageGrammar = modeScopesMap[syntax];
+		if (!languageGrammar) {
+			return syntax;
+		}
+		let languages = languageGrammar.split('.');
+		let thisLanguage = languages[languages.length-1];
+		if (syntax !== thisLanguage || languages.length < 2) {
+			return syntax;
+		}
+		let parentMode = languages[languages.length-2];
+		if (this.emmetSupportedModes.indexOf(parentMode) !== -1) {
+			return parentMode;
+		}
+		return syntax;
+	}
+
+	private getModeScopeMap(): ModeScopeMap {
+		let map: ModeScopeMap = {};
+		ExtensionsRegistry.getAllExtensionDescriptions().forEach((desc) => {
+			if (desc.contributes) {
+				let grammars = (<any>desc.contributes).grammars;
+				if (grammars) {
+					grammars.forEach((grammar) => {
+						if (grammar.language && grammar.scopeName) {
+							map[grammar.language] = grammar.scopeName;
+						}
+					});
+				}
+			}
+		});
+		return map;
 	}
 
 	public getProfileName(): string {

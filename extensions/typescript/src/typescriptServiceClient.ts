@@ -199,7 +199,8 @@ export default class TypeScriptServiceClient implements ITypescriptServiceClient
 		if (data) {
 			this.output.appendLine(this.data2String(data));
 		}
-		this.output.show(true);
+		// VersionStatus.enable(true);
+		// this.output.show(true);
 	}
 
 	private logTrace(message: string, data?: any): void {
@@ -423,9 +424,7 @@ export default class TypeScriptServiceClient implements ITypescriptServiceClient
 				if (token) {
 					token.onCancellationRequested(() => {
 						this.tryCancelRequest(request.seq);
-						let err = new Error('Canceled');
-						err.message = 'Canceled';
-						reject(err);
+						resolve(undefined);
 					});
 				}
 			});
