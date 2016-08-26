@@ -17,6 +17,8 @@ import severity from 'vs/base/common/severity';
 import {TPromise} from 'vs/base/common/winjs.base';
 import aria = require('vs/base/browser/ui/aria/aria');
 import editorbrowser = require('vs/editor/browser/editorBrowser');
+import {ISuggestion} from 'vs/editor/common/modes';
+import {Position} from 'vs/editor/common/core/position';
 import {IContextKeyService, IContextKey} from 'vs/platform/contextkey/common/contextkey';
 import {IMarkerService} from 'vs/platform/markers/common/markers';
 import {ILifecycleService} from 'vs/platform/lifecycle/common/lifecycle';
@@ -945,6 +947,26 @@ export class DebugService implements debug.IDebugService {
 		}
 
 		return this.session.restartFrame({ frameId });
+	}
+
+	public completions(text: string, position: Position): TPromise<ISuggestion[]> {
+		if (!this.session) {
+			return TPromise.as([]);
+		}
+		const focussedStackFrame = this.viewModel.getFocusedStackFrame();
+
+		return this.session.completions({
+			frameId: focussedStackFrame ? focussedStackFrame.frameId : undefined,
+			text,
+			column: position.column,
+			line: position.lineNumber
+		}).then(response => {
+			return !response ? [] : response.body.targets.map(item => ({
+				label: item.label,
+				insertText: item.text || item.label,
+				type: item.type
+			}));
+		}, err => []);
 	}
 
 	private lazyTransitionToRunningState(threadId?: number): void {
