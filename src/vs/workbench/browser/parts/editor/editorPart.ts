@@ -30,6 +30,7 @@ import {IPartService} from 'vs/workbench/services/part/common/partService';
 import {Position, POSITIONS, Direction} from 'vs/platform/editor/common/editor';
 import {IStorageService} from 'vs/platform/storage/common/storage';
 import {IEventService} from 'vs/platform/event/common/event';
+import {DiffEditorInput} from 'vs/workbench/common/editor/diffEditorInput';
 import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
 import {ServiceCollection} from 'vs/platform/instantiation/common/serviceCollection';
 import {IMessageService, IMessageWithAction, Severity} from 'vs/platform/message/common/message';
@@ -632,7 +633,13 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 		// Thus we make the non-active one active and then close the others
 		else {
 			this.openEditor(except, null, this.stacks.positionOfGroup(group)).done(() => {
-				this.doCloseEditors(group, except, direction);
+
+				// since the opening might have failed, we have to check again for the active editor
+				// being the expected one, otherwise we end up in an endless loop trying to open the
+				// editor
+				if (except.matches(group.activeEditor)) {
+					this.doCloseEditors(group, except, direction);
+				}
 			}, errors.onUnexpectedError);
 		}
 	}
@@ -652,7 +659,7 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 	}
 
 	private doHandleDirty(identifier: EditorIdentifier, ignoreIfOpenedInOtherGroup?: boolean): TPromise<boolean /* veto */> {
-		if (!identifier || !identifier.editor || !identifier.editor.isDirty() || (ignoreIfOpenedInOtherGroup && this.stacks.count(identifier.editor) > 1 /* allow to close a dirty editor if it is opened in another group */)) {
+		if (!identifier || !identifier.editor || !identifier.editor.isDirty() || (ignoreIfOpenedInOtherGroup && this.countEditors(identifier.editor, true /* include diff editors */) > 1 /* allow to close a dirty editor if it is opened in another group */)) {
 			return TPromise.as(false); // no veto
 		}
 
@@ -669,6 +676,15 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 			case ConfirmResult.CANCEL:
 				return TPromise.as(true); // veto
 		}
+	}
+
+	private countEditors(editor: EditorInput, includeDiffEditors: boolean): number {
+		const editors = [editor];
+		if (includeDiffEditors && editor instanceof DiffEditorInput) {
+			editors.push(editor.modifiedInput);
+		}
+
+		return editors.reduce((prev, e) => prev += this.stacks.count(editor), 0);
 	}
 
 	public getStacksModel(): EditorStacksModel {
@@ -954,6 +970,14 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 			}
 		}
 
+		let focusGroup = false;
+		const activeGroup = this.stacks.groupAt(activePosition);
+		if (!this.stacks.activeGroup || !activeGroup) {
+			focusGroup = true; // always focus group if this is the first group or we are about to open a new group
+		} else {
+			focusGroup = editors.some(e => !e.options || (!e.options.inactive && !e.options.preserveFocus)); // only focus if the editors to open are not opening as inactive or preserveFocus
+		}
+
 		// Open each input respecting the options. Since there can only be one active editor in each
 		// position, we have to pick the first input from each position and add the others as inactive
 		const promises: TPromise<BaseEditor>[] = [];
@@ -981,8 +1005,10 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 
 		return TPromise.join(promises).then(editors => {
 
-			// Ensure active position
-			this.focusGroup(activePosition);
+			// Adjust focus as needed
+			if (focusGroup) {
+				this.focusGroup(activePosition);
+			}
 
 			// Update stacks model for remaining inactive editors
 			[leftEditors, centerEditors, rightEditors].forEach((editors, index) => {

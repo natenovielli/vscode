@@ -17,7 +17,7 @@ import severity from 'vs/base/common/severity';
 import stdfork = require('vs/base/node/stdFork');
 import {IMessageService, CloseAction} from 'vs/platform/message/common/message';
 import {ITelemetryService} from 'vs/platform/telemetry/common/telemetry';
-import {ITerminalService, ITerminalPanel} from 'vs/workbench/parts/terminal/electron-browser/terminal';
+import {ITerminalService} from 'vs/workbench/parts/terminal/electron-browser/terminal';
 import debug = require('vs/workbench/parts/debug/common/debug');
 import {Adapter} from 'vs/workbench/parts/debug/node/debugAdapter';
 import v8 = require('vs/workbench/parts/debug/node/v8Protocol');
@@ -52,8 +52,8 @@ export class RawDebugSession extends v8.V8Protocol implements debug.IRawDebugSes
 	private startTime: number;
 	private stopServerPending: boolean;
 	private sentPromises: TPromise<DebugProtocol.Response>[];
-	private isAttach: boolean;
-	private capabilities: DebugProtocol.Capabilites;
+	private capabilities: DebugProtocol.Capabilities;
+	private static terminalId: number;
 
 	private _onDidInitialize: Emitter<DebugProtocol.InitializedEvent>;
 	private _onDidStop: Emitter<DebugProtocol.StoppedEvent>;
@@ -212,10 +212,9 @@ export class RawDebugSession extends v8.V8Protocol implements debug.IRawDebugSes
 		this._onDidEvent.fire(event);
 	}
 
-	public get configuration(): { type: string, isAttach: boolean, capabilities: DebugProtocol.Capabilites } {
+	public get configuration(): { type: string, capabilities: DebugProtocol.Capabilities } {
 		return {
 			type: this.adapter.type,
-			isAttach: this.isAttach,
 			capabilities: this.capabilities || {}
 		};
 	}
@@ -233,12 +232,10 @@ export class RawDebugSession extends v8.V8Protocol implements debug.IRawDebugSes
 	}
 
 	public launch(args: DebugProtocol.LaunchRequestArguments): TPromise<DebugProtocol.LaunchResponse> {
-		this.isAttach = false;
 		return this.send('launch', args).then(response => this.readCapabilities(response));
 	}
 
 	public attach(args: DebugProtocol.AttachRequestArguments): TPromise<DebugProtocol.AttachResponse> {
-		this.isAttach = true;
 		return this.send('attach', args).then(response => this.readCapabilities(response));
 	}
 
@@ -344,44 +341,87 @@ export class RawDebugSession extends v8.V8Protocol implements debug.IRawDebugSes
 		return (new Date().getTime() - this.startTime) / 1000;
 	}
 
+	protected dispatchRequest(request: DebugProtocol.Request): void {
+		const response: DebugProtocol.Response = {
+			type: 'response',
+			seq: 0,
+			command: request.command,
+			request_seq: request.seq,
+			success: true
+		};
+
+		if (request.command === 'runInTerminal') {
+			this.runInTerminal(<DebugProtocol.RunInTerminalRequestArguments>request.arguments).then(() => {
+				(<DebugProtocol.RunInTerminalResponse>response).body = {
+					// nothing to return for now..
+				};
+				this.sendResponse(response);
+			}, e => {
+				response.success = false;
+				response.message = 'error while handling request';
+				this.sendResponse(response);
+			});
+		}
+	}
+
 	protected runInTerminal(args: DebugProtocol.RunInTerminalRequestArguments): TPromise<void> {
-		return this.terminalService.createNew(args.title || nls.localize('debuggee', "debuggee")).then(id => {
+		return (!RawDebugSession.terminalId ? this.terminalService.createNew(args.title || nls.localize('debuggee', "debuggee")) : TPromise.as(RawDebugSession.terminalId)).then(id => {
+			RawDebugSession.terminalId = id;
 			return this.terminalService.show(false).then(terminalPanel => {
 				this.terminalService.setActiveTerminalById(id);
-				this.prepareCommand(terminalPanel, args);
+				const command = this.prepareCommand(args);
+				terminalPanel.sendTextToActiveTerminal(command, true);
 			});
 		});
 	}
 
-	private prepareCommand(terminalPanel: ITerminalPanel, args: DebugProtocol.RunInTerminalRequestArguments) {
-
-		const quote = (s: string) => s.indexOf(' ') >= 0 ? `'${s}'` : s;
-
-		function quotes(args: string[]): string {
-			let r = '';
-			for (let a of args) {
-				r += quote(a) + ' ';
-			}
-			return r;
-		}
-
+	private prepareCommand(args: DebugProtocol.RunInTerminalRequestArguments): string {
 		let command = '';
 
-		if (args.cwd) {
-			command += `cd ${quote(args.cwd)}; `;
-		}
+		if (platform.isWindows) {
 
-		if (args.env) {
-			command += 'env';
-			for (let key in args.env) {
-				command += ` '${key}=${args.env[key]}'`;
+			const quote = (s: string) => {
+				s = s.replace(/\"/g, '""');
+				return (s.indexOf(' ') >= 0 || s.indexOf('"') >= 0) ? `"${s}"` : s;
+			};
+
+			if (args.cwd) {
+				command += `cd ${quote(args.cwd)} && `;
 			}
-			command += ' ';
+			if (args.env) {
+				command += 'cmd /C "';
+				for (let key in args.env) {
+					command += `set "${key}=${args.env[key]}" && `;
+				}
+			}
+			for (let a of args.args) {
+				command += `${quote(a)} `;
+			}
+			if (args.env) {
+				command += '"';
+			}
+		} else {
+			const quote = (s: string) => {
+				s = s.replace(/\"/g, '\\"');
+				return s.indexOf(' ') >= 0 ? `"${s}"` : s;
+			};
+
+			if (args.cwd) {
+				command += `cd ${quote(args.cwd)} ; `;
+			}
+			if (args.env) {
+				command += 'env';
+				for (let key in args.env) {
+					command += ` ${quote(key + '=' + args.env[key])}`;
+				}
+				command += ' ';
+			}
+			for (let a of args.args) {
+				command += `${quote(a)} `;
+			}
 		}
 
-		command += quotes(args.args);
-
-		terminalPanel.sendTextToActiveTerminal(command, true);
+		return command;
 	}
 
 	private connectServer(port: number): TPromise<void> {

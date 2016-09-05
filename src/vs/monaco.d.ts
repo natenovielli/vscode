@@ -968,7 +968,7 @@ declare module monaco.editor {
         horizontal?: string;
         /**
          * Cast horizontal and vertical shadows when the content is scrolled.
-         * Defaults to false.
+         * Defaults to true.
          */
         useShadows?: boolean;
         /**
@@ -1165,6 +1165,12 @@ declare module monaco.editor {
          */
         wrappingColumn?: number;
         /**
+         * Control the alternate style of viewport wrapping.
+         * When set to true viewport wrapping is used only when the window width is less than the number of columns specified in the wrappingColumn property. Has no effect if wrappingColumn is not a positive number.
+         * Defaults to false.
+         */
+        wordWrap?: boolean;
+        /**
          * Control indentation of wrapped lines. Can be: 'none', 'same' or 'indent'.
          * Defaults to 'none'.
          */
@@ -1283,9 +1289,14 @@ declare module monaco.editor {
         renderControlCharacters?: boolean;
         /**
          * Enable rendering of indent guides.
-         * Defaults to true.
+         * Defaults to false.
          */
         renderIndentGuides?: boolean;
+        /**
+         * Enable rendering of current line highlight.
+         * Defaults to true.
+         */
+        renderLineHighlight?: boolean;
         /**
          * Inserting and deleting whitespace follows tab stops.
          */
@@ -1383,6 +1394,7 @@ declare module monaco.editor {
         renderWhitespace: boolean;
         renderControlCharacters: boolean;
         renderIndentGuides: boolean;
+        renderLineHighlight: boolean;
         scrollbar: InternalEditorScrollbarOptions;
     }
 
@@ -1408,6 +1420,7 @@ declare module monaco.editor {
         renderWhitespace: boolean;
         renderControlCharacters: boolean;
         renderIndentGuides: boolean;
+        renderLineHighlight: boolean;
         scrollbar: boolean;
     }
 

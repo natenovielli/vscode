@@ -32,6 +32,7 @@ var editorResources = [
 	'!out-build/vs/base/browser/ui/splitview/**/*',
 	'!out-build/vs/base/browser/ui/toolbar/**/*',
 	'!out-build/vs/base/browser/ui/octiconLabel/**/*',
+	'!out-build/vs/editor/contrib/defineKeybinding/**/*',
 	'out-build/vs/base/worker/workerMainCompatibility.html',
 	'out-build/vs/base/worker/workerMain.{js,js.map}',
 	'!out-build/vs/workbench/**',
@@ -59,7 +60,8 @@ function editorLoaderConfig() {
 	// never ship octicons in editor
 	result.paths['vs/base/browser/ui/octiconLabel/octiconLabel'] = 'out-build/vs/base/browser/ui/octiconLabel/octiconLabel.mock';
 
-	result['vs/css'] = { inlineResources: true };
+	// force css inlining to use base64 -- see https://github.com/Microsoft/monaco-editor/issues/148
+	result['vs/css'] = { inlineResources: 'base64' };
 
 	return result;
 }

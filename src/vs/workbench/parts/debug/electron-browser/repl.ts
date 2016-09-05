@@ -23,16 +23,17 @@ import {Position} from 'vs/editor/common/core/position';
 import * as modes from 'vs/editor/common/modes';
 import {editorAction, ServicesAccessor, EditorAction} from 'vs/editor/common/editorCommonExtensions';
 import {IModelService} from 'vs/editor/common/services/modelService';
-import {CodeEditor} from 'vs/editor/browser/codeEditor';
 import {ServiceCollection} from 'vs/platform/instantiation/common/serviceCollection';
-import {IContextKeyService} from 'vs/platform/contextkey/common/contextkey';
+import {IContextKeyService, ContextKeyExpr} from 'vs/platform/contextkey/common/contextkey';
 import {ITelemetryService} from 'vs/platform/telemetry/common/telemetry';
 import {IContextViewService, IContextMenuService} from 'vs/platform/contextview/browser/contextView';
 import {IInstantiationService, createDecorator} from 'vs/platform/instantiation/common/instantiation';
 import {IWorkspaceContextService} from 'vs/platform/workspace/common/workspace';
 import {IStorageService, StorageScope} from 'vs/platform/storage/common/storage';
 import viewer = require('vs/workbench/parts/debug/electron-browser/replViewer');
+import {ReplEditor} from 'vs/workbench/parts/debug/electron-browser/replEditor';
 import debug = require('vs/workbench/parts/debug/common/debug');
+import {Expression} from 'vs/workbench/parts/debug/common/debugModel';
 import debugactions = require('vs/workbench/parts/debug/browser/debugActions');
 import replhistory = require('vs/workbench/parts/debug/common/replHistory');
 import {Panel} from 'vs/workbench/browser/panel';
@@ -42,9 +43,7 @@ import {IPanelService} from 'vs/workbench/services/panel/common/panelService';
 const $ = dom.$;
 
 const replTreeOptions: tree.ITreeOptions = {
-	indentPixels: 8,
 	twistiePixels: 20,
-	paddingOnRow: false,
 	ariaLabel: nls.localize('replAriaLabel', "Read Eval Print Loop Panel")
 };
 
@@ -70,7 +69,7 @@ export class Repl extends Panel implements IPrivateReplService {
 	private renderer: viewer.ReplExpressionsRenderer;
 	private characterWidthSurveyor: HTMLElement;
 	private treeContainer: HTMLElement;
-	private replInput: CodeEditor;
+	private replInput: ReplEditor;
 	private replInputContainer: HTMLElement;
 	private refreshTimeoutHandle: number;
 	private actions: actions.IAction[];
@@ -116,10 +115,24 @@ export class Repl extends Panel implements IPrivateReplService {
 				return; // refresh already triggered
 			}
 
+			const elements = this.debugService.getModel().getReplElements();
+			const delay = elements.length > 0 ? Repl.REFRESH_DELAY : 0;
+
 			this.refreshTimeoutHandle = setTimeout(() => {
 				this.refreshTimeoutHandle = null;
-				this.tree.refresh().done(() => this.tree.setScrollPosition(1), errors.onUnexpectedError);
-			}, Repl.REFRESH_DELAY);
+				this.tree.refresh().then(() => {
+					this.tree.setScrollPosition(1);
+
+					// If the last repl element has children - auto expand it #6019
+					const elements = this.debugService.getModel().getReplElements();
+					const lastElement = elements.length > 0 ? elements[elements.length - 1] : null;
+					if (lastElement instanceof Expression && lastElement.reference > 0) {
+						return this.tree.expand(elements[elements.length - 1]).then(() =>
+							this.tree.reveal(elements[elements.length - 1], 0)
+						);
+					}
+				}, errors.onUnexpectedError);
+			}, delay);
 		}
 	}
 
@@ -132,10 +145,14 @@ export class Repl extends Panel implements IPrivateReplService {
 		const scopedContextKeyService = this.contextKeyService.createScoped(this.replInputContainer);
 		this.toDispose.push(scopedContextKeyService);
 		debug.CONTEXT_IN_DEBUG_REPL.bindTo(scopedContextKeyService).set(true);
+		const onFirstReplLine = debug.CONTEXT_ON_FIRST_DEBUG_REPL_LINE.bindTo(scopedContextKeyService);
+		onFirstReplLine.set(true);
+		const onLastReplLine = debug.CONTEXT_ON_LAST_DEBUG_REPL_LINE.bindTo(scopedContextKeyService);
+		onLastReplLine.set(true);
+
 		const scopedInstantiationService = this.instantiationService.createChild(new ServiceCollection(
 			[IContextKeyService, scopedContextKeyService], [IPrivateReplService, this]));
-
-		this.replInput = scopedInstantiationService.createInstance(CodeEditor, this.replInputContainer, this.getReplInputOptions());
+		this.replInput = scopedInstantiationService.createInstance(ReplEditor, this.replInputContainer, this.getReplInputOptions());
 		const model = this.modelService.createModel('', null, uri.parse(`${debug.DEBUG_SCHEME}:input`));
 		this.replInput.setModel(model);
 
@@ -158,6 +175,10 @@ export class Repl extends Panel implements IPrivateReplService {
 				return;
 			}
 			this.layout(this.dimension, Math.min(170, e.scrollHeight));
+		}));
+		this.toDispose.push(this.replInput.onDidChangeCursorPosition(e => {
+			onFirstReplLine.set(e.position.lineNumber === 1);
+			onLastReplLine.set(e.position.lineNumber === this.replInput.getModel().getLineCount());
 		}));
 
 		this.toDispose.push(dom.addStandardDisposableListener(this.replInputContainer, dom.EventType.FOCUS, () => dom.addClass(this.replInputContainer, 'synthetic-focus')));
@@ -248,13 +269,13 @@ export class Repl extends Panel implements IPrivateReplService {
 			selectOnLineNumbers: false,
 			selectionHighlight: false,
 			scrollbar: {
-				horizontal: 'hidden',
-				vertical: 'hidden'
+				horizontal: 'hidden'
 			},
 			lineDecorationsWidth: 0,
 			scrollBeyondLastLine: false,
 			lineHeight: 21,
-			theme: this.themeService.getColorTheme()
+			theme: this.themeService.getColorTheme(),
+			renderLineHighlight: false
 		};
 	}
 
@@ -275,7 +296,7 @@ class ReplHistoryPreviousAction extends EditorAction {
 			alias: 'History Previous',
 			precondition: debug.CONTEXT_IN_DEBUG_REPL,
 			kbOpts: {
-				kbExpr: EditorContextKeys.TextFocus,
+				kbExpr: ContextKeyExpr.and(EditorContextKeys.TextFocus, debug.CONTEXT_ON_FIRST_DEBUG_REPL_LINE),
 				primary: KeyCode.UpArrow,
 				weight: 50
 			},
@@ -300,7 +321,7 @@ class ReplHistoryNextAction extends EditorAction {
 			alias: 'History Next',
 			precondition: debug.CONTEXT_IN_DEBUG_REPL,
 			kbOpts: {
-				kbExpr: EditorContextKeys.TextFocus,
+				kbExpr: ContextKeyExpr.and(EditorContextKeys.TextFocus, debug.CONTEXT_ON_LAST_DEBUG_REPL_LINE),
 				primary: KeyCode.DownArrow,
 				weight: 50
 			},
