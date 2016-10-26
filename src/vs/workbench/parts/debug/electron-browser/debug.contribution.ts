@@ -7,7 +7,6 @@ import 'vs/css!../browser/media/debug.contribution';
 import 'vs/css!../browser/media/debugHover';
 import nls = require('vs/nls');
 import { KeyMod, KeyCode } from 'vs/base/common/keyCodes';
-import { TPromise } from 'vs/base/common/winjs.base';
 import { SyncActionDescriptor } from 'vs/platform/actions/common/actions';
 import platform = require('vs/platform/platform');
 import { registerSingleton } from 'vs/platform/instantiation/common/extensions';
@@ -15,6 +14,7 @@ import { KeybindingsRegistry } from 'vs/platform/keybinding/common/keybindingsRe
 import { IKeybindings } from 'vs/platform/keybinding/common/keybinding';
 import { ServicesAccessor } from 'vs/platform/instantiation/common/instantiation';
 import { SyncDescriptor } from 'vs/platform/instantiation/common/descriptors';
+import * as confregistry from 'vs/platform/configuration/common/configurationRegistry';
 import wbaregistry = require('vs/workbench/common/actionRegistry');
 import viewlet = require('vs/workbench/browser/viewlet');
 import panel = require('vs/workbench/browser/panel');
@@ -136,19 +136,9 @@ registry.registerWorkbenchAction(new SyncActionDescriptor(FocusReplAction, Focus
 KeybindingsRegistry.registerCommandAndKeybindingRule({
 	id: '_workbench.startDebug',
 	weight: KeybindingsRegistry.WEIGHT.workbenchContrib(0),
-	handler(accessor: ServicesAccessor, configuration: any) {
+	handler(accessor: ServicesAccessor, configurationOrName: any) {
 		const debugService = accessor.get(debug.IDebugService);
-		if (typeof configuration === 'string') {
-			const configurationManager = debugService.getConfigurationManager();
-			return configurationManager.setConfiguration(configuration)
-				.then(() => {
-					return configurationManager.configuration ? debugService.createSession(false)
-						: TPromise.wrapError(new Error(nls.localize('launchConfigDoesNotExist', "Launch configuration '{0}' does not exist.", configuration)));
-				});
-		}
-
-		const noDebug = configuration && !!configuration.noDebug;
-		return debugService.createSession(noDebug, configuration);
+		return debugService.createProcess(configurationOrName);
 	},
 	when: debug.CONTEXT_NOT_IN_DEBUG_MODE,
 	primary: undefined
@@ -164,3 +154,24 @@ registerSingleton(IDebugService, service.DebugService);
 	'DebugErrorEditor'),
 	[new SyncDescriptor(DebugErrorEditorInput)]
 );
+
+// Register configuration
+const configurationRegistry = <confregistry.IConfigurationRegistry>platform.Registry.as(confregistry.Extensions.Configuration);
+configurationRegistry.registerConfiguration({
+	id: 'debug',
+	order: 20,
+	title: nls.localize('debugConfigurationTitle', "Debug"),
+	type: 'object',
+	properties: {
+		'debug.allowBreakpointsEverywhere': {
+			type: 'boolean',
+			description: nls.localize({ comment: ['This is the description for a setting'], key: 'allowBreakpointsEverywhere' }, "Allows setting breakpoint in any file"),
+			default: false
+		},
+		'debug.openExplorerOnEnd': {
+			type: 'boolean',
+			description: nls.localize({ comment: ['This is the description for a setting'], key: 'openExplorerOnEnd' }, "Automatically open explorer viewlet on the end of a debug session"),
+			default: false
+		}
+	}
+});

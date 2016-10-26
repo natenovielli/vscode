@@ -34,7 +34,7 @@ import * as browser from 'vs/base/browser/browser';
 import { IIntegrityService } from 'vs/platform/integrity/common/integrity';
 
 import * as os from 'os';
-import { ipcRenderer as ipc, webFrame, remote, shell } from 'electron';
+import { ipcRenderer as ipc, webFrame, remote } from 'electron';
 
 // --- actions
 
@@ -548,7 +548,7 @@ export class ReportIssueAction extends Action {
 			return this.extensionManagementService.getInstalled(LocalExtensionType.User).then(extensions => {
 				const issueUrl = this.generateNewIssueUrl(product.reportIssueUrl, pkg.name, pkg.version, product.commit, product.date, res.isPure, extensions);
 
-				shell.openExternal(issueUrl);
+				window.open(issueUrl);
 
 				return TPromise.as(true);
 			});
@@ -562,7 +562,11 @@ export class ReportIssueAction extends Action {
 		const body = encodeURIComponent(
 			`- VSCode Version: ${name} ${version}${isPure ? '' : ' **[Unsupported]**'} (${product.commit || 'Commit unknown'}, ${product.date || 'Date unknown'})
 - OS Version: ${osVersion}
-- Extensions: ${extensions.map(e => e.id).join(', ')}
+- Extensions:
+
+${this.generateExtensionTable(extensions)}
+
+---
 
 Steps to Reproduce:
 
@@ -571,6 +575,16 @@ Steps to Reproduce:
 		);
 
 		return `${baseUrl}${queryStringPrefix}body=${body}`;
+	}
+
+	private generateExtensionTable(extensions: ILocalExtension[]): string {
+		let tableHeader = `|Extension|Author|Version|
+|---|---|---|`;
+		const table = extensions.map(e => {
+			return `|${e.manifest.name}|${e.manifest.publisher}|${e.manifest.version}|`;
+		}).join('\n');
+
+		return tableHeader + '\n' + table;
 	}
 }
 

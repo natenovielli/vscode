@@ -825,6 +825,9 @@ export class DiffEditorWidget extends EventEmitter implements editorBrowser.IDif
 	}
 
 	private _updateDecorations(): void {
+		if (!this.originalEditor.getModel() || !this.modifiedEditor.getModel()) {
+			return;
+		}
 		var lineChanges = this._lineChanges || [];
 
 		var foreignOriginal = this._originalEditorState.getForeignViewZones(this.originalEditor.getWhitespaces());
@@ -849,6 +852,7 @@ export class DiffEditorWidget extends EventEmitter implements editorBrowser.IDif
 		clonedOptions.scrollbar.vertical = 'visible';
 		clonedOptions.folding = false;
 		clonedOptions.codeLens = false;
+		clonedOptions.fixedOverflowWidgets = true;
 		return clonedOptions;
 	}
 
@@ -1850,7 +1854,7 @@ class InlineViewZonesComputer extends ViewZonesComputer {
 			config.viewInfo.stopRenderingLineAfter,
 			config.viewInfo.renderWhitespace,
 			config.viewInfo.renderControlCharacters,
-			parts.getParts()
+			parts
 		));
 
 		let myResult: string[] = [];

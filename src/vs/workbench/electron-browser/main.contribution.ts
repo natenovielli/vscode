@@ -26,7 +26,7 @@ const viewCategory = nls.localize('view', "View");
 const helpCategory = nls.localize('help', "Help");
 const developerCategory = nls.localize('developer', "Developer");
 const fileCategory = nls.localize('file', "File");
-const workbenchActionsRegistry = <IWorkbenchActionRegistry>Registry.as(Extensions.WorkbenchActions);
+const workbenchActionsRegistry = Registry.as<IWorkbenchActionRegistry>(Extensions.WorkbenchActions);
 workbenchActionsRegistry.registerWorkbenchAction(new SyncActionDescriptor(NewWindowAction, NewWindowAction.ID, NewWindowAction.LABEL, { primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KEY_N }), 'New Window');
 workbenchActionsRegistry.registerWorkbenchAction(new SyncActionDescriptor(CloseWindowAction, CloseWindowAction.ID, CloseWindowAction.LABEL, { primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KEY_W }), 'Close Window');
 workbenchActionsRegistry.registerWorkbenchAction(new SyncActionDescriptor(SwitchWindow, SwitchWindow.ID, SwitchWindow.LABEL), 'Switch Window');
@@ -67,13 +67,19 @@ KeybindingsRegistry.registerCommandAndKeybindingRule({
 });
 
 // Configuration: Workbench
-const configurationRegistry = <IConfigurationRegistry>Registry.as(ConfigurationExtensions.Configuration);
+const configurationRegistry = Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration);
 configurationRegistry.registerConfiguration({
 	'id': 'workbench',
 	'order': 7,
 	'title': nls.localize('workbenchConfigurationTitle', "Workbench"),
 	'type': 'object',
 	'properties': {
+		'workbench.editor.defaultEditorGroupLayout': {
+			'type': 'string',
+			'enum': ['vertical', 'horizontal'],
+			'default': 'vertical',
+			'description': nls.localize('defaultEditorGroupLayout', "Controls how multiple editor groups should layout by default if no other user choice has been made.")
+		},
 		'workbench.editor.showTabs': {
 			'type': 'boolean',
 			'description': nls.localize('showEditorTabs', "Controls if opened editors should show in tabs or not."),
@@ -116,6 +122,11 @@ configurationRegistry.registerConfiguration({
 			'default': 'left',
 			'description': nls.localize('sideBarLocation', "Controls the location of the sidebar. It can either show on the left or right of the workbench.")
 		},
+		'workbench.statusBar.visible': {
+			'type': 'boolean',
+			'default': true,
+			'description': nls.localize('statusBarVisibility', "Controls the visibility of the status bar at the bottom of the workbench.")
+		}
 	}
 });
 
@@ -146,22 +157,6 @@ configurationRegistry.registerConfiguration({
 			'type': 'number',
 			'default': 0,
 			'description': nls.localize('zoomLevel', "Adjust the zoom level of the window. The original size is 0 and each increment above (e.g. 1) or below (e.g. -1) represents zooming 20% larger or smaller. You can also enter decimals to adjust the zoom level with a finer granularity.")
-		}
-	}
-});
-
-// Configuration: Update
-configurationRegistry.registerConfiguration({
-	'id': 'update',
-	'order': 15,
-	'title': nls.localize('updateConfigurationTitle', "Update"),
-	'type': 'object',
-	'properties': {
-		'update.channel': {
-			'type': 'string',
-			'enum': ['none', 'default'],
-			'default': 'default',
-			'description': nls.localize('updateChannel', "Configure whether you receive automatic updates from an update channel. Requires a restart after change.")
 		}
 	}
 });

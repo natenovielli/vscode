@@ -296,6 +296,7 @@ class InternalEditorOptionsHelper {
 			renderIndentGuides: toBoolean(opts.renderIndentGuides),
 			renderLineHighlight: toBoolean(opts.renderLineHighlight),
 			scrollbar: scrollbar,
+			fixedOverflowWidgets: toBoolean(opts.fixedOverflowWidgets)
 		});
 
 		let contribInfo = new editorCommon.EditorContribOptions({
@@ -310,6 +311,7 @@ class InternalEditorOptionsHelper {
 			suggestOnTriggerCharacters: toBoolean(opts.suggestOnTriggerCharacters),
 			acceptSuggestionOnEnter: toBoolean(opts.acceptSuggestionOnEnter),
 			snippetSuggestions: opts.snippetSuggestions,
+			emptySelectionClipboard: opts.emptySelectionClipboard,
 			tabCompletion: opts.tabCompletion,
 			wordBasedSuggestions: opts.wordBasedSuggestions,
 			suggestFontSize: opts.suggestFontSize,
@@ -655,7 +657,7 @@ let editorConfiguration: IConfigurationNode = {
 			'type': 'string',
 			'enum': ['off', 'on', 'relative'],
 			'default': DefaultConfig.editor.lineNumbers,
-			'description': nls.localize('lineNumbers', "Controls visibility of line numbers")
+			'description': nls.localize('lineNumbers', "Controls the display of line numbers. Possible values are 'on', 'off', and 'relative'. 'relative' shows the line count from the current cursor position.")
 		},
 		'editor.rulers': {
 			'type': 'array',
@@ -762,6 +764,11 @@ let editorConfiguration: IConfigurationNode = {
 			'default': DefaultConfig.editor.snippetSuggestions,
 			'description': nls.localize('snippetSuggestions', "Controls whether snippets are shown with other suggestions and how they are sorted.")
 		},
+		'editor.emptySelectionClipboard': {
+			'type': 'boolean',
+			'default': DefaultConfig.editor.emptySelectionClipboard,
+			'description': nls.localize('emptySelectionClipboard', "Controls whether copying without a selection copies the current line.")
+		},
 		'editor.wordBasedSuggestions': {
 			'type': 'boolean',
 			'default': DefaultConfig.editor.wordBasedSuggestions,
@@ -851,6 +858,11 @@ let editorConfiguration: IConfigurationNode = {
 			'type': 'boolean',
 			'default': DefaultConfig.editor.folding,
 			'description': nls.localize('folding', "Controls whether the editor has code folding enabled")
+		},
+		'editor.glyphMargin': {
+			'type': 'boolean',
+			'default': DefaultConfig.editor.glyphMargin,
+			'description': nls.localize('glyphMargin', "Controls whether the editor should render the vertical glyph margin. Glyph margin is mostly used for debugging.")
 		},
 		'editor.useTabStops': {
 			'type': 'boolean',

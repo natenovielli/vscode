@@ -21,6 +21,7 @@ import { ExtHostLanguageFeatures } from 'vs/workbench/api/node/extHostLanguageFe
 import { MainThreadLanguageFeatures } from 'vs/workbench/api/node/mainThreadLanguageFeatures';
 import { ExtHostCommands } from 'vs/workbench/api/node/extHostCommands';
 import { MainThreadCommands } from 'vs/workbench/api/node/mainThreadCommands';
+import { IHeapService } from 'vs/workbench/api/node/mainThreadHeapService';
 import { ExtHostDocuments } from 'vs/workbench/api/node/extHostDocuments';
 import { getDocumentSymbols } from 'vs/editor/contrib/quickOpen/common/quickOpen';
 import { DocumentSymbolProviderRegistry, DocumentHighlightKind } from 'vs/editor/common/modes';
@@ -40,6 +41,7 @@ import { asWinJsPromise } from 'vs/base/common/async';
 import { MainContext, ExtHostContext } from 'vs/workbench/api/node/extHost.protocol';
 import { ExtHostDiagnostics } from 'vs/workbench/api/node/extHostDiagnostics';
 import { ExtHostHeapService } from 'vs/workbench/api/node/extHostHeapService';
+import * as vscode from 'vscode';
 
 const defaultSelector = { scheme: 'far' };
 const model: EditorCommon.IModel = EditorModel.createFromString(
@@ -66,6 +68,13 @@ suite('ExtHostLanguageFeatures', function () {
 		let instantiationService = new TestInstantiationService();
 		instantiationService.stub(IThreadService, threadService);
 		instantiationService.stub(IMarkerService);
+		instantiationService.stub(IHeapService, {
+			_serviceBrand: undefined,
+			trackRecursive(args) {
+				// nothing
+				return args;
+			}
+		});
 
 		originalErrorHandler = errorHandler.getUnexpectedErrorHandler();
 		setUnexpectedErrorHandler(() => { });
@@ -82,6 +91,7 @@ suite('ExtHostLanguageFeatures', function () {
 				lines: model.getValue().split(model.getEOL()),
 				BOM: '',
 				length: -1,
+				containsRTL: false,
 				options: {
 					tabSize: 4,
 					insertSpaces: true,
@@ -91,14 +101,16 @@ suite('ExtHostLanguageFeatures', function () {
 			},
 		});
 
-		const commands = new ExtHostCommands(threadService, null);
+		const heapService = new ExtHostHeapService();
+
+		const commands = new ExtHostCommands(threadService, null, heapService);
 		threadService.set(ExtHostContext.ExtHostCommands, commands);
 		threadService.setTestInstance(MainContext.MainThreadCommands, instantiationService.createInstance(MainThreadCommands));
 
 		const diagnostics = new ExtHostDiagnostics(threadService);
 		threadService.set(ExtHostContext.ExtHostDiagnostics, diagnostics);
 
-		extHost = new ExtHostLanguageFeatures(threadService, extHostDocuments, commands, new ExtHostHeapService(), diagnostics);
+		extHost = new ExtHostLanguageFeatures(threadService, extHostDocuments, commands, heapService, diagnostics);
 		threadService.set(ExtHostContext.ExtHostLanguageFeatures, extHost);
 
 		mainThread = <MainThreadLanguageFeatures>threadService.setTestInstance(MainContext.MainThreadLanguageFeatures, instantiationService.createInstance(MainThreadLanguageFeatures));
@@ -731,6 +743,27 @@ suite('ExtHostLanguageFeatures', function () {
 
 	// --- parameter hints
 
+	test('Parameter Hints, order', function () {
+
+		disposables.push(extHost.registerSignatureHelpProvider(defaultSelector, <vscode.SignatureHelpProvider>{
+			provideSignatureHelp(): any {
+				return undefined;
+			}
+		}, []));
+
+		disposables.push(extHost.registerSignatureHelpProvider(defaultSelector, <vscode.SignatureHelpProvider>{
+			provideSignatureHelp(): vscode.SignatureHelp {
+				return new types.SignatureHelp();
+			}
+		}, []));
+
+		return threadService.sync().then(() => {
+
+			return provideSignatureHelp(model, new EditorPosition(1, 1)).then(value => {
+				assert.ok(value);
+			});
+		});
+	});
 	test('Parameter Hints, evil provider', function () {
 
 		disposables.push(extHost.registerSignatureHelpProvider(defaultSelector, <vscode.SignatureHelpProvider>{
@@ -742,9 +775,7 @@ suite('ExtHostLanguageFeatures', function () {
 		return threadService.sync().then(() => {
 
 			return provideSignatureHelp(model, new EditorPosition(1, 1)).then(value => {
-				throw new Error('error expeted');
-			}, err => {
-				assert.equal(err.message, 'evil');
+				assert.equal(value, undefined);
 			});
 		});
 	});
@@ -884,7 +915,30 @@ suite('ExtHostLanguageFeatures', function () {
 		}));
 
 		return threadService.sync().then(() => {
-			return getDocumentFormattingEdits(model, { insertSpaces: true, tabSize: 4 }).then(_ => { throw new Error(); }, err => { });
+			return getDocumentFormattingEdits(model, { insertSpaces: true, tabSize: 4 });
+		});
+	});
+
+	test('Format Doc, order', function () {
+		disposables.push(extHost.registerDocumentFormattingEditProvider(defaultSelector, <vscode.DocumentFormattingEditProvider>{
+			provideDocumentFormattingEdits(): any {
+				return [new types.TextEdit(new types.Range(0, 0, 0, 0), 'testing')];
+			}
+		}));
+
+		disposables.push(extHost.registerDocumentFormattingEditProvider(defaultSelector, <vscode.DocumentFormattingEditProvider>{
+			provideDocumentFormattingEdits(): any {
+				return undefined;
+			}
+		}));
+
+		return threadService.sync().then(() => {
+			return getDocumentFormattingEdits(model, { insertSpaces: true, tabSize: 4 }).then(value => {
+				assert.equal(value.length, 1);
+				let [first] = value;
+				assert.equal(first.text, 'testing');
+				assert.deepEqual(first.range, { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 });
+			});
 		});
 	});
 
@@ -933,7 +987,7 @@ suite('ExtHostLanguageFeatures', function () {
 		}));
 
 		return threadService.sync().then(() => {
-			return getDocumentRangeFormattingEdits(model, new EditorRange(1, 1, 1, 1), { insertSpaces: true, tabSize: 4 }).then(_ => { throw new Error(); }, err => { });
+			return getDocumentRangeFormattingEdits(model, new EditorRange(1, 1, 1, 1), { insertSpaces: true, tabSize: 4 });
 		});
 	});
 

@@ -152,6 +152,7 @@ export class QuickOpenWidget implements IModelProvider {
 
 				DOM.addDisposableListener(this.inputBox.inputElement, DOM.EventType.KEY_DOWN, (e: KeyboardEvent) => {
 					const keyboardEvent: StandardKeyboardEvent = new StandardKeyboardEvent(e);
+					const shouldOpenInBackground = this.shouldOpenInBackground(keyboardEvent);
 
 					// Do not handle Tab: It is used to navigate between elements without mouse
 					if (keyboardEvent.keyCode === KeyCode.Tab) {
@@ -163,15 +164,18 @@ export class QuickOpenWidget implements IModelProvider {
 						DOM.EventHelper.stop(e, true);
 
 						this.navigateInTree(keyboardEvent.keyCode, keyboardEvent.shiftKey);
+
+						// Position cursor at the end of input to allow right arrow (open in background) to function immediately
+						this.inputBox.inputElement.selectionStart = this.inputBox.value.length;
 					}
 
-					// Select element on Enter
-					else if (keyboardEvent.keyCode === KeyCode.Enter) {
+					// Select element on Enter or on Arrow-Right if we are at the end of the input
+					else if (keyboardEvent.keyCode === KeyCode.Enter || shouldOpenInBackground) {
 						DOM.EventHelper.stop(e, true);
 
 						const focus = this.tree.getFocus();
 						if (focus) {
-							this.elementSelected(focus, e);
+							this.elementSelected(focus, e, shouldOpenInBackground ? Mode.OPEN_IN_BACKGROUND : Mode.OPEN);
 						}
 					}
 
@@ -304,6 +308,18 @@ export class QuickOpenWidget implements IModelProvider {
 		return this.builder.getHTMLElement();
 	}
 
+	private shouldOpenInBackground(e: StandardKeyboardEvent): boolean {
+		if (e.keyCode !== KeyCode.RightArrow) {
+			return false; // only for right arrow
+		}
+
+		if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+			return false; // no modifiers allowed
+		}
+
+		return this.inputBox.inputElement.selectionStart === this.inputBox.value.length; // only when cursor is at the end of the input field value
+	}
+
 	private onType(): void {
 		const value = this.inputBox.value;
 
@@ -401,13 +417,16 @@ export class QuickOpenWidget implements IModelProvider {
 		this.model.runner.run(value, Mode.PREVIEW, context);
 	}
 
-	private elementSelected(value: any, event?: any): void {
+	private elementSelected(value: any, event?: any, preferredMode?: Mode): void {
 		let hide = true;
 
 		// Trigger open of element on selection
 		if (this.isVisible()) {
+			let mode = preferredMode || Mode.OPEN;
+
 			const context: IEntryRunContext = { event, keymods: this.extractKeyMods(event), quickNavigateConfiguration: this.quickNavigateConfiguration };
-			hide = this.model.runner.run(value, Mode.OPEN, context);
+
+			hide = this.model.runner.run(value, mode, context);
 		}
 
 		// add telemetry when an item is accepted, logging the index of the item in the list and the length of the list

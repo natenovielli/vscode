@@ -21,7 +21,7 @@ const _ = require('underscore');
 const util = require('./lib/util');
 const ext = require('./lib/extensions');
 const buildfile = require('../src/buildfile');
-const common = require('./gulpfile.common');
+const common = require('./lib/optimize');
 const nlsDev = require('vscode-nls-dev');
 const root = path.dirname(__dirname);
 const commit = util.getVersion(root);
@@ -39,8 +39,8 @@ const nodeModules = ['electron', 'original-fs']
 // Build
 
 const builtInExtensions = [
-	{ name: 'ms-vscode.node-debug', version: '1.7.1' },
-	{ name: 'ms-vscode.node-debug2', version: '0.0.7' }
+	{ name: 'ms-vscode.node-debug', version: '1.7.6' },
+	{ name: 'ms-vscode.node-debug2', version: '1.7.0' }
 ];
 
 const vscodeEntryPoints = _.flatten([
@@ -227,8 +227,7 @@ function packageTask(platform, arch, opts) {
 		}));
 
 		const sources = es.merge(src, extensions, marketplaceExtensions)
-			.pipe(filter(['**', '!**/*.js.map']))
-			.pipe(util.handleAzureJson({ platform }));
+			.pipe(filter(['**', '!**/*.js.map']));
 
 		let version = packageJson.version;
 		const quality = product.quality;

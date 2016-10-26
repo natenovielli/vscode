@@ -6,6 +6,7 @@
 'use strict';
 
 import * as path from 'path';
+import * as os from 'os';
 import * as fs from 'original-fs';
 import * as platform from 'vs/base/common/platform';
 import * as nls from 'vs/nls';
@@ -17,7 +18,7 @@ import { EventEmitter } from 'events';
 import { IEnvironmentService } from 'vs/platform/environment/common/environment';
 import { IStorageService } from 'vs/code/electron-main/storage';
 import { IPath, VSCodeWindow, ReadyState, IWindowConfiguration, IWindowState as ISingleWindowState, defaultWindowState, IWindowSettings } from 'vs/code/electron-main/window';
-import { ipcMain as ipc, app, screen, crashReporter, BrowserWindow, dialog } from 'electron';
+import { ipcMain as ipc, app, screen, crashReporter, BrowserWindow, dialog, shell } from 'electron';
 import { IPathWithLineAndColumn, parseLineAndColumnAware } from 'vs/code/electron-main/paths';
 import { ILifecycleService } from 'vs/code/electron-main/lifecycle';
 import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
@@ -417,6 +418,20 @@ export class WindowsManager implements IWindowsService {
 			}
 		});
 
+		ipc.on('vscode:setHeaders', (event, windowId: number, urls: string[], headers: any) => {
+			this.logService.log('IPC#vscode:setHeaders');
+
+			const vscodeWindow = this.getWindowById(windowId);
+
+			if (!vscodeWindow || !urls || !urls.length || !headers) {
+				return;
+			}
+
+			vscodeWindow.win.webContents.session.webRequest.onBeforeSendHeaders({ urls }, (details, cb) => {
+				cb({ cancel: false, requestHeaders: assign(details.requestHeaders, headers) });
+			});
+		});
+
 		ipc.on('vscode:broadcast', (event, windowId: number, target: string, broadcast: { channel: string; payload: any; }) => {
 			if (broadcast.channel && !types.isUndefinedOrNull(broadcast.payload)) {
 				this.logService.log('IPC#vscode:broadcast', target, broadcast.channel, broadcast.payload);
@@ -467,6 +482,18 @@ export class WindowsManager implements IWindowsService {
 			window.send('vscode:switchWindow', windows.map(w => {
 				return { path: w.openedWorkspacePath, title: w.win.getTitle(), id: w.id };
 			}));
+		});
+
+		ipc.on('vscode:showItemInFolder', (event, path: string) => {
+			this.logService.log('IPC#vscode-showItemInFolder');
+
+			shell.showItemInFolder(path);
+		});
+
+		ipc.on('vscode:openExternal', (event, url: string) => {
+			this.logService.log('IPC#vscode-openExternal');
+
+			shell.openExternal(url);
 		});
 
 		this.updateService.on('update-downloaded', (update: IUpdate) => {
@@ -530,8 +557,26 @@ export class WindowsManager implements IWindowsService {
 
 			loggedStartupTimes = true;
 
-			window.send('vscode:telemetry', { eventName: 'startupTime', data: { ellapsed: Date.now() - global.vscodeStart } });
+			this.logStartupTimes(window);
 		});
+	}
+
+	private logStartupTimes(window: VSCodeWindow): void {
+		let totalmem: number;
+		let cpus: { count: number; speed: number; model: string; };
+
+		try {
+			totalmem = os.totalmem();
+
+			const rawCpus = os.cpus();
+			if (rawCpus && rawCpus.length > 0) {
+				cpus = { count: rawCpus.length, speed: rawCpus[0].speed, model: rawCpus[0].model };
+			}
+		} catch (error) {
+			this.logService.log(error); // be on the safe side with these hardware method calls
+		}
+
+		window.send('vscode:telemetry', { eventName: 'startupTime', data: { ellapsed: Date.now() - global.vscodeStart }, totalmem, cpus });
 	}
 
 	private onBroadcast(event: string, payload: any): void {
