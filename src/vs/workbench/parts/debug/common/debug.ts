@@ -53,8 +53,8 @@ export interface ITreeElement {
 }
 
 export interface IExpressionContainer extends ITreeElement {
-	reference: number;
 	stackFrame: IStackFrame;
+	hasChildren: boolean;
 	getChildren(debugService: IDebugService): TPromise<IExpression[]>;
 }
 
@@ -72,7 +72,6 @@ export enum SessionRequestType {
 }
 
 export interface ISession {
-	// TODO@Isidor consider removing this - feels ugly
 	requestType: SessionRequestType;
 	stackTrace(args: DebugProtocol.StackTraceArguments): TPromise<DebugProtocol.StackTraceResponse>;
 	scopes(args: DebugProtocol.ScopesArguments): TPromise<DebugProtocol.ScopesResponse>;
@@ -299,12 +298,6 @@ export interface IEnvConfig {
 	configurationNames?: string[];
 }
 
-export interface IExtHostConfig extends IEnvConfig {
-	port?: number;
-	sourceMaps?: boolean;
-	outDir?: string;
-}
-
 export interface IConfig extends IEnvConfig {
 	windows?: IEnvConfig;
 	osx?: IEnvConfig;
@@ -349,9 +342,6 @@ export interface IConfigurationManager {
 	 * Opens the launch.json file
 	 */
 	openConfigFile(sideBySide: boolean): TPromise<boolean>;
-
-	// TODO@Isidor remove this from the interface
-	loadLaunchConfig(): TPromise<IGlobalConfig>;
 
 	/**
 	 * Returns true if breakpoints can be set for a given editor model. Depends on mode.

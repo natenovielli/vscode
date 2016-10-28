@@ -450,12 +450,8 @@ export class DebugService implements debug.IDebugService {
 
 		this.viewModel.setFocusedStackFrame(focusedStackFrame, process);
 		this._onDidChangeState.fire();
-		if (focusedStackFrame) {
-			return this.model.evaluateWatchExpressions(focusedStackFrame);
-		} else {
-			this.model.clearWatchExpressionValues();
-			return TPromise.as(null);
-		}
+
+		return this.model.evaluateWatchExpressions(process, focusedStackFrame);
 	}
 
 	public enableOrDisableBreakpoints(enable: boolean, breakpoint?: debug.IEnablement): TPromise<void> {
@@ -512,7 +508,7 @@ export class DebugService implements debug.IDebugService {
 
 	public addReplExpression(name: string): TPromise<void> {
 		this.telemetryService.publicLog('debugService/addReplExpression');
-		return this.model.addReplExpression(this.viewModel.focusedStackFrame, name)
+		return this.model.addReplExpression(this.viewModel.focusedProcess, this.viewModel.focusedStackFrame, name)
 			// Evaluate all watch expressions again since repl evaluation might have changed some.
 			.then(() => this.setFocusedStackFrameAndEvaluate(this.viewModel.focusedStackFrame));
 	}
@@ -530,11 +526,11 @@ export class DebugService implements debug.IDebugService {
 	}
 
 	public addWatchExpression(name: string): TPromise<void> {
-		return this.model.addWatchExpression(this.viewModel.focusedStackFrame, name);
+		return this.model.addWatchExpression(this.viewModel.focusedProcess, this.viewModel.focusedStackFrame, name);
 	}
 
 	public renameWatchExpression(id: string, newName: string): TPromise<void> {
-		return this.model.renameWatchExpression(this.viewModel.focusedStackFrame, id, newName);
+		return this.model.renameWatchExpression(this.viewModel.focusedProcess, this.viewModel.focusedStackFrame, id, newName);
 	}
 
 	public removeWatchExpressions(id?: string): void {
@@ -601,7 +597,7 @@ export class DebugService implements debug.IDebugService {
 						}))));
 	}
 
-	private doCreateProcess(sessionId: string, configuration: debug.IExtHostConfig): TPromise<any> {
+	private doCreateProcess(sessionId: string, configuration: debug.IConfig): TPromise<any> {
 
 		return this.telemetryService.getTelemetryInfo().then(info => {
 			const telemetryInfo: { [key: string]: string } = Object.create(null);
@@ -764,15 +760,8 @@ export class DebugService implements debug.IDebugService {
 
 		const sessionId = uuid.generateUuid();
 		this.setStateAndEmit(sessionId, debug.State.Initializing);
-		return this.configurationManager.getConfiguration(this.viewModel.selectedConfigurationName).then((configuration: debug.IExtHostConfig) =>
-			this.doCreateProcess(sessionId, {
-				type: configuration.type,
-				request: 'attach',
-				port,
-				sourceMaps: configuration.sourceMaps,
-				outDir: configuration.outDir,
-				debugServer: configuration.debugServer
-			})
+		return this.configurationManager.getConfiguration(this.viewModel.selectedConfigurationName).then(config =>
+			this.doCreateProcess(sessionId, config)
 		);
 	}
 
@@ -904,19 +893,8 @@ export class DebugService implements debug.IDebugService {
 
 	private transitionToRunningState(session: RawDebugSession, threadId?: number): void {
 		this.model.clearThreads(session.getId(), false, threadId);
-
-		// TODO@Isidor remove this mess
-		// Get a top stack frame of a stopped thread if there is any.
-		const process = this.model.getProcesses().filter(p => p.getId() === session.getId()).pop();
-		const stoppedThread = process && process.getAllThreads().filter(t => t.stopped).pop();
-		const callStack = stoppedThread ? stoppedThread.getCachedCallStack() : null;
-		const stackFrameToFocus = callStack && callStack.length > 0 ? callStack[0] : null;
-
-		if (!stoppedThread && process) {
-			this.setStateAndEmit(session.getId(), process.session.requestType === debug.SessionRequestType.LAUNCH_NO_DEBUG ? debug.State.RunningNoDebug : debug.State.Running);
-		}
-
-		this.setFocusedStackFrameAndEvaluate(stackFrameToFocus).done(null, errors.onUnexpectedError);
+		this.setStateAndEmit(session.getId(), session.requestType === debug.SessionRequestType.LAUNCH_NO_DEBUG ? debug.State.RunningNoDebug : debug.State.Running);
+		this.setFocusedStackFrameAndEvaluate(null).done(null, errors.onUnexpectedError);
 	}
 
 	private getDebugStringEditorInput(process: debug.IProcess, source: Source, value: string, mtype: string): DebugStringEditorInput {
