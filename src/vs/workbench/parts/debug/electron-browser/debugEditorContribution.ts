@@ -4,24 +4,24 @@
  *--------------------------------------------------------------------------------------------*/
 
 import nls = require('vs/nls');
-import {TPromise} from 'vs/base/common/winjs.base';
-import {RunOnceScheduler} from 'vs/base/common/async';
+import { TPromise } from 'vs/base/common/winjs.base';
+import { RunOnceScheduler } from 'vs/base/common/async';
 import lifecycle = require('vs/base/common/lifecycle');
 import env = require('vs/base/common/platform');
 import uri from 'vs/base/common/uri';
-import {IAction, Action} from 'vs/base/common/actions';
-import {KeyCode} from 'vs/base/common/keyCodes';
+import { IAction, Action } from 'vs/base/common/actions';
+import { KeyCode } from 'vs/base/common/keyCodes';
 import keyboard = require('vs/base/browser/keyboardEvent');
 import editorbrowser = require('vs/editor/browser/editorBrowser');
-import {editorContribution} from 'vs/editor/browser/editorBrowserExtensions';
+import { editorContribution } from 'vs/editor/browser/editorBrowserExtensions';
 import editorcommon = require('vs/editor/common/editorCommon');
-import {DebugHoverWidget} from 'vs/workbench/parts/debug/electron-browser/debugHover';
+import { DebugHoverWidget } from 'vs/workbench/parts/debug/electron-browser/debugHover';
 import debugactions = require('vs/workbench/parts/debug/browser/debugActions');
 import debug = require('vs/workbench/parts/debug/common/debug');
-import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
-import {IContextMenuService} from 'vs/platform/contextview/browser/contextView';
-import {Range} from 'vs/editor/common/core/range';
-import {ICodeEditorService} from 'vs/editor/common/services/codeEditorService';
+import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
+import { IContextMenuService } from 'vs/platform/contextview/browser/contextView';
+import { Range } from 'vs/editor/common/core/range';
+import { ICodeEditorService } from 'vs/editor/common/services/codeEditorService';
 
 const HOVER_DELAY = 300;
 
@@ -117,7 +117,7 @@ export class DebugEditorContribution implements debug.IDebugEditorContribution {
 		this.toDispose.push(this.editor.onMouseLeave((e: editorbrowser.IEditorMouseEvent) => {
 			this.ensureBreakpointHintDecoration(-1);
 		}));
-		this.toDispose.push(this.debugService.onDidChangeState(state => this.onDebugStateUpdate(state)));
+		this.toDispose.push(this.debugService.onDidChangeState(() => this.onDebugStateUpdate()));
 
 		// hover listeners & hover widget
 		this.toDispose.push(this.editor.onMouseDown((e: editorbrowser.IEditorMouseEvent) => this.onEditorMouseDown(e)));
@@ -159,7 +159,8 @@ export class DebugEditorContribution implements debug.IDebugEditorContribution {
 		this.breakpointHintDecoration = this.editor.deltaDecorations(this.breakpointHintDecoration, newDecoration);
 	}
 
-	private onDebugStateUpdate(state: debug.State): void {
+	private onDebugStateUpdate(): void {
+		const state = this.debugService.state;
 		if (state !== debug.State.Stopped) {
 			this.hideHoverWidget();
 		}

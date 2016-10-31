@@ -4,12 +4,16 @@
  *--------------------------------------------------------------------------------------------*/
 
 import nls = require('vs/nls');
+import { TPromise } from 'vs/base/common/winjs.base';
+import strings = require('vs/base/common/strings');
 import objects = require('vs/base/common/objects');
 import paths = require('vs/base/common/paths');
 import platform = require('vs/base/common/platform');
 import debug = require('vs/workbench/parts/debug/common/debug');
-import {ISystemVariables} from 'vs/base/common/parsers';
-import {IExtensionDescription} from 'vs/platform/extensions/common/extensions';
+import { IExtensionDescription } from 'vs/platform/extensions/common/extensions';
+import { IConfigurationResolverService } from 'vs/workbench/services/configurationResolver/common/configurationResolver';
+import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
+import { ICommandService } from 'vs/platform/commands/common/commands';
 
 export class Adapter {
 
@@ -20,12 +24,16 @@ export class Adapter {
 	public type: string;
 	private _label: string;
 	private configurationAttributes: any;
-	public initialConfigurations: any[];
+	public initialConfigurations: any[] | string;
 	public variables: { [key: string]: string };
 	public enableBreakpointsFor: { languageIds: string[] };
 	public aiKey: string;
 
-	constructor(rawAdapter: debug.IRawAdapter, systemVariables: ISystemVariables, public extensionDescription: IExtensionDescription) {
+	constructor(public rawAdapter: debug.IRawAdapter, public extensionDescription: IExtensionDescription,
+		@IConfigurationResolverService configurationResolverService: IConfigurationResolverService,
+		@IConfigurationService private configurationService: IConfigurationService,
+		@ICommandService private commandService: ICommandService
+	) {
 		if (rawAdapter.windows) {
 			rawAdapter.win = rawAdapter.windows;
 		}
@@ -58,11 +66,11 @@ export class Adapter {
 		this.args = this.args || rawAdapter.args;
 
 		if (this.program) {
-			this.program = systemVariables ? systemVariables.resolve(this.program) : this.program;
+			this.program = configurationResolverService ? configurationResolverService.resolve(this.program) : this.program;
 			this.program = paths.join(extensionDescription.extensionFolderPath, this.program);
 		}
 		if (this.runtime && this.runtime.indexOf('./') === 0) {
-			this.runtime = systemVariables ? systemVariables.resolve(this.runtime) : this.runtime;
+			this.runtime = configurationResolverService ? configurationResolverService.resolve(this.runtime) : this.runtime;
 			this.runtime = paths.join(extensionDescription.extensionFolderPath, this.runtime);
 		}
 
@@ -75,8 +83,37 @@ export class Adapter {
 		this.aiKey = rawAdapter.aiKey;
 	}
 
+	public getInitialConfigFileContent(): TPromise<string> {
+		const editorConfig = this.configurationService.getConfiguration<any>();
+		if (typeof this.initialConfigurations === 'string') {
+			// Contributed initialConfigurations is a command that needs to be invoked
+			// Debug adapter will dynamically provide the full launch.json
+			return this.commandService.executeCommand<string>(<string>this.initialConfigurations).then(content => {
+				// Debug adapter returned the full content of the launch.json - return it after format
+				if (editorConfig.editor.insertSpaces) {
+					content = content.replace(new RegExp('\t', 'g'), strings.repeat(' ', editorConfig.editor.tabSize));
+				}
+
+				return content;
+			});
+		}
+
+		return TPromise.as(JSON.stringify(
+			{
+				version: '0.2.0',
+				configurations: this.initialConfigurations || []
+			},
+			null,
+			editorConfig.editor.insertSpaces ? strings.repeat(' ', editorConfig.editor.tabSize) : '\t'
+		));
+	};
+
 	public get label() {
 		return this._label || this.type;
+	}
+
+	public set label(value: string) {
+		this._label = value;
 	}
 
 	public getSchemaAttributes(): any[] {
@@ -89,11 +126,11 @@ export class Adapter {
 				attributes.additionalProperties = false;
 				attributes.type = 'object';
 				if (!attributes.properties) {
-					attributes.properties = { };
+					attributes.properties = {};
 				}
 				const properties = attributes.properties;
 				properties.type = {
-					enum: [this.type],
+					enum: [this.type, 'composite'],
 					description: nls.localize('debugType', "Type of configuration.")
 				};
 				properties.name = {
@@ -104,6 +141,15 @@ export class Adapter {
 				properties.request = {
 					enum: [request],
 					description: nls.localize('debugRequest', "Request type of configuration. Can be \"launch\" or \"attach\"."),
+				};
+				properties.debugServer = {
+					type: 'number',
+					description: nls.localize('debugServer', "For debug extension development only: if a port is specified VS Code tries to connect to a debug adapter running in server mode")
+				};
+				properties.configurationNames = {
+					type: 'array',
+					default: [],
+					description: nls.localize('debugConfigurationNames', "Configurations that will be launched as part of this \"composite\" configuration. Only respected if type of this configuration is \"composite\".")
 				};
 				properties.preLaunchTask = {
 					type: ['string', 'null'],
@@ -118,7 +164,6 @@ export class Adapter {
 				this.warnRelativePaths(properties.outDir);
 				this.warnRelativePaths(properties.program);
 				this.warnRelativePaths(properties.cwd);
-				this.warnRelativePaths(properties.runtimeExecutable);
 				const osProperties = objects.deepClone(properties);
 				properties.windows = {
 					type: 'object',

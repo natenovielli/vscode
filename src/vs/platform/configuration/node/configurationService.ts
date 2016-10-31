@@ -4,16 +4,18 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import {TPromise} from 'vs/base/common/winjs.base';
+import { TPromise } from 'vs/base/common/winjs.base';
 import * as objects from 'vs/base/common/objects';
-import {getDefaultValues, flatten} from 'vs/platform/configuration/common/model';
-import {ConfigWatcher} from 'vs/base/node/config';
-import {Registry} from 'vs/platform/platform';
-import {IConfigurationRegistry, Extensions} from 'vs/platform/configuration/common/configurationRegistry';
-import {IDisposable, dispose, toDisposable} from 'vs/base/common/lifecycle';
-import {IConfigurationService, IConfigurationServiceEvent, IConfigurationValue, getConfigurationValue} from 'vs/platform/configuration/common/configuration';
-import Event, {Emitter} from 'vs/base/common/event';
-import {IEnvironmentService} from 'vs/platform/environment/common/environment';
+import { getDefaultValues, flatten } from 'vs/platform/configuration/common/model';
+import { ConfigWatcher } from 'vs/base/node/config';
+import { Registry } from 'vs/platform/platform';
+import { IConfigurationRegistry, Extensions } from 'vs/platform/configuration/common/configurationRegistry';
+import { IDisposable, dispose, toDisposable } from 'vs/base/common/lifecycle';
+import { IConfigurationService, IConfigurationServiceEvent, IConfigurationValue, getConfigurationValue } from 'vs/platform/configuration/common/configuration';
+import Event, { Emitter } from 'vs/base/common/event';
+import { IEnvironmentService } from 'vs/platform/environment/common/environment';
+import { ITelemetryService } from 'vs/platform/telemetry/common/telemetry';
+import { RunOnceScheduler } from 'vs/base/common/async';
 
 export class ConfigurationService<T> implements IConfigurationService, IDisposable {
 
@@ -24,7 +26,11 @@ export class ConfigurationService<T> implements IConfigurationService, IDisposab
 	private rawConfig: ConfigWatcher<T>;
 	private cache: T;
 
+	private onConfigurationChangeDelayer: RunOnceScheduler;
+
 	private _onDidUpdateConfiguration: Emitter<IConfigurationServiceEvent>;
+
+	private _telemetryService: ITelemetryService;
 
 	constructor(
 		@IEnvironmentService environmentService: IEnvironmentService
@@ -37,9 +43,26 @@ export class ConfigurationService<T> implements IConfigurationService, IDisposab
 		this.rawConfig = new ConfigWatcher(environmentService.appSettingsPath, { changeBufferDelay: 300, defaultConfig: Object.create(null) });
 		this.disposables.push(toDisposable(() => this.rawConfig.dispose()));
 
-		// Listeners
-		this.disposables.push(this.rawConfig.onDidUpdateConfiguration(config => this.onConfigurationChange()));
-		this.disposables.push(Registry.as<IConfigurationRegistry>(Extensions.Configuration).onDidRegisterConfiguration(() => this.onConfigurationChange()));
+		this.onConfigurationChangeDelayer = new RunOnceScheduler(() => this.onConfigurationChange(), 0);
+		this.disposables.push(this.onConfigurationChangeDelayer);
+
+		this.registerListeners();
+	}
+
+	private registerListeners(): void {
+
+		// Emit config change event when the raw config notifies us about a change
+		this.disposables.push(this.rawConfig.onDidUpdateConfiguration(event => {
+			this.onConfigurationChange();
+			if (this._telemetryService) {
+				this._telemetryService.publicLog('updateUserConfiguration', { userConfigurationKeys: Object.keys(event.config) });
+			}
+		}));
+
+		// Expect many calls to the registry (e.g. from extensions). So we buffer this event to not
+		// spam listeners with too many configuration change events
+		const configurationRegistry = Registry.as<IConfigurationRegistry>(Extensions.Configuration);
+		this.disposables.push(configurationRegistry.onDidRegisterConfiguration(() => this.onConfigurationChangeDelayer.schedule()));
 	}
 
 	private onConfigurationChange(): void {
@@ -73,10 +96,11 @@ export class ConfigurationService<T> implements IConfigurationService, IDisposab
 	}
 
 	public lookup<C>(key: string): IConfigurationValue<C> {
+		// make sure to clone the configuration so that the receiver does not tamper with the values
 		return {
-			default: getConfigurationValue<C>(getDefaultValues(), key),
-			user: getConfigurationValue<C>(flatten(this.rawConfig.getConfig()), key),
-			value: getConfigurationValue<C>(this.getConfiguration(), key)
+			default: objects.clone(getConfigurationValue<C>(getDefaultValues(), key)),
+			user: objects.clone(getConfigurationValue<C>(flatten(this.rawConfig.getConfig()), key)),
+			value: objects.clone(getConfigurationValue<C>(this.getConfiguration(), key))
 		};
 	}
 
@@ -93,5 +117,9 @@ export class ConfigurationService<T> implements IConfigurationService, IDisposab
 
 	public dispose(): void {
 		this.disposables = dispose(this.disposables);
+	}
+
+	public set telemetryService(value: ITelemetryService) {
+		this._telemetryService = value;
 	}
 }

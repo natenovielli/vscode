@@ -5,9 +5,9 @@
 'use strict';
 
 import * as strings from 'vs/base/common/strings';
-import {Range} from 'vs/editor/common/core/range';
-import {IRichEditBracket} from 'vs/editor/common/editorCommon';
-import {IRichEditBrackets, CharacterPair} from 'vs/editor/common/modes';
+import { Range } from 'vs/editor/common/core/range';
+import { IRichEditBracket } from 'vs/editor/common/editorCommon';
+import { IRichEditBrackets, CharacterPair } from 'vs/editor/common/modes';
 
 interface ISimpleInternalBracket {
 	open: string;
@@ -20,8 +20,8 @@ export class RichEditBrackets implements IRichEditBrackets {
 	public forwardRegex: RegExp;
 	public reversedRegex: RegExp;
 	public maxBracketLength: number;
-	public textIsBracket: {[text:string]:IRichEditBracket;};
-	public textIsOpenBracket: {[text:string]:boolean;};
+	public textIsBracket: { [text: string]: IRichEditBracket; };
+	public textIsOpenBracket: { [text: string]: boolean; };
 
 	constructor(modeId: string, brackets: CharacterPair[]) {
 		this.brackets = brackets.map((b) => {
@@ -50,9 +50,9 @@ export class RichEditBrackets implements IRichEditBrackets {
 	}
 }
 
-function once<T, R>(keyFn:(input:T)=>string, computeFn:(input:T)=>R):(input:T)=>R {
-	let cache: {[key:string]:R;} = {};
-	return (input:T):R => {
+function once<T, R>(keyFn: (input: T) => string, computeFn: (input: T) => R): (input: T) => R {
+	let cache: { [key: string]: R; } = {};
+	return (input: T): R => {
 		let key = keyFn(input);
 		if (!cache.hasOwnProperty(key)) {
 			cache[key] = computeFn(input);
@@ -61,21 +61,21 @@ function once<T, R>(keyFn:(input:T)=>string, computeFn:(input:T)=>R):(input:T)=>
 	};
 }
 
-var getRegexForBracketPair = once<ISimpleInternalBracket,RegExp>(
+var getRegexForBracketPair = once<ISimpleInternalBracket, RegExp>(
 	(input) => `${input.open};${input.close}`,
 	(input) => {
 		return createOrRegex([input.open, input.close]);
 	}
 );
 
-var getReversedRegexForBracketPair = once<ISimpleInternalBracket,RegExp>(
+var getReversedRegexForBracketPair = once<ISimpleInternalBracket, RegExp>(
 	(input) => `${input.open};${input.close}`,
 	(input) => {
 		return createOrRegex([toReversedString(input.open), toReversedString(input.close)]);
 	}
 );
 
-var getRegexForBrackets = once<ISimpleInternalBracket[],RegExp>(
+var getRegexForBrackets = once<ISimpleInternalBracket[], RegExp>(
 	(input) => input.map(b => `${b.open};${b.close}`).join(';'),
 	(input) => {
 		let pieces: string[] = [];
@@ -87,7 +87,7 @@ var getRegexForBrackets = once<ISimpleInternalBracket[],RegExp>(
 	}
 );
 
-var getReversedRegexForBrackets = once<ISimpleInternalBracket[],RegExp>(
+var getReversedRegexForBrackets = once<ISimpleInternalBracket[], RegExp>(
 	(input) => input.map(b => `${b.open};${b.close}`).join(';'),
 	(input) => {
 		let pieces: string[] = [];
@@ -99,22 +99,35 @@ var getReversedRegexForBrackets = once<ISimpleInternalBracket[],RegExp>(
 	}
 );
 
-function createOrRegex(pieces:string[]): RegExp {
+function createOrRegex(pieces: string[]): RegExp {
 	let regexStr = `(${pieces.map(strings.escapeRegExpCharacters).join(')|(')})`;
-	return strings.createRegExp(regexStr, true, false, false, false);
+	return strings.createRegExp(regexStr, true);
 }
 
-function toReversedString(str:string): string {
-	let reversedStr = '';
-	for (let i = str.length - 1; i >= 0; i--) {
-		reversedStr += str.charAt(i);
+let toReversedString = (function () {
+
+	function reverse(str: string): string {
+		let reversedStr = '';
+		for (let i = str.length - 1; i >= 0; i--) {
+			reversedStr += str.charAt(i);
+		}
+		return reversedStr;
 	}
-	return reversedStr;
-}
+
+	let lastInput: string = null;
+	let lastOutput: string = null;
+	return function toReversedString(str: string): string {
+		if (lastInput !== str) {
+			lastInput = str;
+			lastOutput = reverse(lastInput);
+		}
+		return lastOutput;
+	};
+})();
 
 export class BracketsUtils {
 
-	private static _findPrevBracketInText(reversedBracketRegex:RegExp, lineNumber:number, reversedText:string, offset:number): Range {
+	private static _findPrevBracketInText(reversedBracketRegex: RegExp, lineNumber: number, reversedText: string, offset: number): Range {
 		let m = reversedText.match(reversedBracketRegex);
 
 		if (!m) {
@@ -128,17 +141,15 @@ export class BracketsUtils {
 		return new Range(lineNumber, absoluteMatchOffset - matchLength + 1, lineNumber, absoluteMatchOffset + 1);
 	}
 
-	public static findPrevBracketInToken(reversedBracketRegex:RegExp, lineNumber:number, lineText:string, currentTokenStart:number, currentTokenEnd:number): Range {
+	public static findPrevBracketInToken(reversedBracketRegex: RegExp, lineNumber: number, lineText: string, currentTokenStart: number, currentTokenEnd: number): Range {
 		// Because JS does not support backwards regex search, we search forwards in a reversed string with a reversed regex ;)
-		let currentTokenReversedText = '';
-		for (let index = currentTokenEnd - 1; index >= currentTokenStart; index--) {
-			currentTokenReversedText += lineText.charAt(index);
-		}
+		let reversedLineText = toReversedString(lineText);
+		let reversedTokenText = reversedLineText.substring(lineText.length - currentTokenEnd, lineText.length - currentTokenStart);
 
-		return this._findPrevBracketInText(reversedBracketRegex, lineNumber, currentTokenReversedText, currentTokenStart);
+		return this._findPrevBracketInText(reversedBracketRegex, lineNumber, reversedTokenText, currentTokenStart);
 	}
 
-	public static findNextBracketInText(bracketRegex:RegExp, lineNumber:number, text:string, offset:number): Range {
+	public static findNextBracketInText(bracketRegex: RegExp, lineNumber: number, text: string, offset: number): Range {
 		let m = text.match(bracketRegex);
 
 		if (!m) {
@@ -152,7 +163,7 @@ export class BracketsUtils {
 		return new Range(lineNumber, absoluteMatchOffset + 1, lineNumber, absoluteMatchOffset + 1 + matchLength);
 	}
 
-	public static findNextBracketInToken(bracketRegex:RegExp, lineNumber:number, lineText:string, currentTokenStart:number, currentTokenEnd:number): Range {
+	public static findNextBracketInToken(bracketRegex: RegExp, lineNumber: number, lineText: string, currentTokenStart: number, currentTokenEnd: number): Range {
 		let currentTokenText = lineText.substring(currentTokenStart, currentTokenEnd);
 
 		return this.findNextBracketInText(bracketRegex, lineNumber, currentTokenText, currentTokenStart);

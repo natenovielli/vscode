@@ -6,26 +6,36 @@
 'use strict';
 
 import nls = require('vs/nls');
-import {TPromise} from 'vs/base/common/winjs.base';
-import {Dimension, Builder, $} from 'vs/base/browser/builder';
-import {ResourceViewer} from 'vs/base/browser/ui/resourceviewer/resourceViewer';
-import {EditorModel, EditorInput, EditorOptions} from 'vs/workbench/common/editor';
-import {BaseEditor} from 'vs/workbench/browser/parts/editor/baseEditor';
-import {BinaryEditorModel} from 'vs/workbench/common/editor/binaryEditorModel';
-import {IWorkbenchEditorService} from 'vs/workbench/services/editor/common/editorService';
-import {ITelemetryService} from 'vs/platform/telemetry/common/telemetry';
-import {DomScrollableElement} from 'vs/base/browser/ui/scrollbar/scrollableElement';
-import {ScrollbarVisibility} from 'vs/base/common/scrollable';
+import Event, { Emitter } from 'vs/base/common/event';
+import { TPromise } from 'vs/base/common/winjs.base';
+import { Dimension, Builder, $ } from 'vs/base/browser/builder';
+import { ResourceViewer } from 'vs/base/browser/ui/resourceviewer/resourceViewer';
+import { EditorModel, EditorInput, EditorOptions } from 'vs/workbench/common/editor';
+import { BaseEditor } from 'vs/workbench/browser/parts/editor/baseEditor';
+import { BinaryEditorModel } from 'vs/workbench/common/editor/binaryEditorModel';
+import { IWorkbenchEditorService } from 'vs/workbench/services/editor/common/editorService';
+import { ITelemetryService } from 'vs/platform/telemetry/common/telemetry';
+import { DomScrollableElement } from 'vs/base/browser/ui/scrollbar/scrollableElement';
+import { ScrollbarVisibility } from 'vs/base/common/scrollable';
 
 /*
  * This class is only intended to be subclassed and not instantiated.
  */
 export abstract class BaseBinaryResourceEditor extends BaseEditor {
+	private _onMetadataChanged: Emitter<void>;
+	private metadata: string;
+
 	private binaryContainer: Builder;
 	private scrollbar: DomScrollableElement;
 
 	constructor(id: string, telemetryService: ITelemetryService, private _editorService: IWorkbenchEditorService) {
 		super(id, telemetryService);
+
+		this._onMetadataChanged = new Emitter<void>();
+	}
+
+	public get onMetadataChanged(): Event<void> {
+		return this._onMetadataChanged.event;
 	}
 
 	public getTitle(): string {
@@ -39,7 +49,7 @@ export abstract class BaseBinaryResourceEditor extends BaseEditor {
 	public createEditor(parent: Builder): void {
 
 		// Container for Binary
-		let binaryContainerElement = document.createElement('div');
+		const binaryContainerElement = document.createElement('div');
 		binaryContainerElement.className = 'binary-container';
 		this.binaryContainer = $(binaryContainerElement);
 		this.binaryContainer.tabindex(0); // enable focus support from the editor part (do not remove)
@@ -50,11 +60,11 @@ export abstract class BaseBinaryResourceEditor extends BaseEditor {
 	}
 
 	public setInput(input: EditorInput, options: EditorOptions): TPromise<void> {
-		let oldInput = this.getInput();
+		const oldInput = this.getInput();
 		super.setInput(input, options);
 
 		// Detect options
-		let forceOpen = options && options.forceOpen;
+		const forceOpen = options && options.forceOpen;
 
 		// Same Input
 		if (!forceOpen && input.matches(oldInput)) {
@@ -75,14 +85,26 @@ export abstract class BaseBinaryResourceEditor extends BaseEditor {
 			}
 
 			// Render Input
-			let model = <BinaryEditorModel>resolvedModel;
-			ResourceViewer.show({ name: model.getName(), resource: model.getResource(), size: model.getSize(), etag: model.getETag() }, this.binaryContainer, this.scrollbar);
+			const model = <BinaryEditorModel>resolvedModel;
+			ResourceViewer.show({ name: model.getName(), resource: model.getResource(), size: model.getSize(), etag: model.getETag() }, this.binaryContainer, this.scrollbar, (meta) => this.handleMetadataChanged(meta));
 
 			return TPromise.as<void>(null);
 		});
 	}
 
+	private handleMetadataChanged(meta: string): void {
+		this.metadata = meta;
+		this._onMetadataChanged.fire();
+	}
+
+	public getMetadata(): string {
+		return this.metadata;
+	}
+
 	public clearInput(): void {
+
+		// Clear Meta
+		this.handleMetadataChanged(null);
 
 		// Empty HTML Container
 		$(this.binaryContainer).empty();

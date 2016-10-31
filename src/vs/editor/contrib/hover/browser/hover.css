@@ -18,7 +18,6 @@
 	user-select: text;
 	box-sizing: initial;
 	animation: fadein 100ms linear;
-	animation: fadein 100ms ease-in;
 	line-height: 1.5em;
 }
 
@@ -27,7 +26,7 @@
 }
 
 .monaco-editor-hover .monaco-editor-hover-content {
-	max-width: 438px;
+	max-width: 500px;
 }
 
 .monaco-editor-hover .hover-row {
@@ -62,6 +61,11 @@
 	background-color: rgba(132, 132, 132, 0.14);
 	border-radius: 3px;
 	padding: 0 0.4em;
+}
+
+.monaco-editor-hover .monaco-tokenized-source {
+	white-space: pre-wrap;
+	word-break: break-all;
 }
 
 .monaco-editor .hoverHighlight {

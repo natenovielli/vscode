@@ -3,12 +3,12 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import {Platform} from 'vs/base/common/platform';
-import {IConfiguration} from 'vs/editor/common/config/defaultConfig';
-import {IConfigurationService} from 'vs/platform/configuration/common/configuration';
-import {ITerminalConfiguration} from 'vs/workbench/parts/terminal/electron-browser/terminal';
-import {Builder} from 'vs/base/browser/builder';
-import {DefaultConfig} from 'vs/editor/common/config/defaultConfig';
+import { Builder } from 'vs/base/browser/builder';
+import { DefaultConfig } from 'vs/editor/common/config/defaultConfig';
+import { IConfiguration } from 'vs/editor/common/config/defaultConfig';
+import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
+import { ITerminalConfiguration } from 'vs/workbench/parts/terminal/electron-browser/terminal';
+import { Platform } from 'vs/base/common/platform';
 
 const DEFAULT_LINE_HEIGHT = 1.2;
 
@@ -87,30 +87,31 @@ export interface IShell {
  * specific test cases can be written.
  */
 export class TerminalConfigHelper {
-	private charMeasureElement: HTMLElement;
+	public panelContainer: Builder;
+
+	private _charMeasureElement: HTMLElement;
 
 	public constructor(
-		private platform: Platform,
-		private configurationService: IConfigurationService,
-		private panelContainer: Builder) {
+		private _platform: Platform,
+		@IConfigurationService private _configurationService: IConfigurationService) {
 	}
 
 	public getTheme(baseThemeId: string): string[] {
 		return DEFAULT_ANSI_COLORS[baseThemeId];
 	}
 
-	private measureFont(fontFamily: string, fontSize: number, lineHeight: number): ITerminalFont {
+	private _measureFont(fontFamily: string, fontSize: number, lineHeight: number): ITerminalFont {
 		// Create charMeasureElement if it hasn't been created or if it was orphaned by its parent
-		if (!this.charMeasureElement || !this.charMeasureElement.parentElement) {
-			this.charMeasureElement = this.panelContainer.div().getHTMLElement();
+		if (!this._charMeasureElement || !this._charMeasureElement.parentElement) {
+			this._charMeasureElement = this.panelContainer.div().getHTMLElement();
 		}
-		let style = this.charMeasureElement.style;
+		let style = this._charMeasureElement.style;
 		style.display = 'block';
 		style.fontFamily = fontFamily;
 		style.fontSize = fontSize + 'px';
 		style.height = Math.floor(lineHeight * fontSize) + 'px';
-		this.charMeasureElement.innerText = 'X';
-		let rect = this.charMeasureElement.getBoundingClientRect();
+		this._charMeasureElement.innerText = 'X';
+		let rect = this._charMeasureElement.getBoundingClientRect();
 		style.display = 'none';
 		let charWidth = Math.ceil(rect.width);
 		let charHeight = Math.ceil(rect.height);
@@ -128,49 +129,53 @@ export class TerminalConfigHelper {
 	 * terminal.integrated.fontSize, terminal.integrated.lineHeight configuration properties
 	 */
 	public getFont(): ITerminalFont {
-		let terminalConfig = this.configurationService.getConfiguration<ITerminalConfiguration>().terminal.integrated;
-		let editorConfig = this.configurationService.getConfiguration<IConfiguration>();
+		let terminalConfig = this._configurationService.getConfiguration<ITerminalConfiguration>().terminal.integrated;
+		let editorConfig = this._configurationService.getConfiguration<IConfiguration>();
 
 		let fontFamily = terminalConfig.fontFamily || editorConfig.editor.fontFamily;
 		let fontSize = this.toInteger(terminalConfig.fontSize, 0) || editorConfig.editor.fontSize;
 		if (fontSize <= 0) {
 			fontSize = DefaultConfig.editor.fontSize;
 		}
-		let lineHeight = this.toInteger(terminalConfig.lineHeight, DEFAULT_LINE_HEIGHT);
+		let lineHeight = terminalConfig.lineHeight <= 0 ? DEFAULT_LINE_HEIGHT : terminalConfig.lineHeight;
 
-		return this.measureFont(fontFamily, fontSize, lineHeight <= 0 ? DEFAULT_LINE_HEIGHT : lineHeight);
+		return this._measureFont(fontFamily, fontSize, lineHeight);
 	}
 
 	public getFontLigaturesEnabled(): boolean {
-		let terminalConfig = this.configurationService.getConfiguration<ITerminalConfiguration>().terminal.integrated;
+		let terminalConfig = this._configurationService.getConfiguration<ITerminalConfiguration>().terminal.integrated;
 		return terminalConfig.fontLigatures;
 	}
 
 	public getCursorBlink(): boolean {
-		let terminalConfig = this.configurationService.getConfiguration<ITerminalConfiguration>().terminal.integrated;
+		let terminalConfig = this._configurationService.getConfiguration<ITerminalConfiguration>().terminal.integrated;
 		return terminalConfig.cursorBlinking;
 	}
 
 	public getShell(): IShell {
-		let config = this.configurationService.getConfiguration<ITerminalConfiguration>();
+		let config = this._configurationService.getConfiguration<ITerminalConfiguration>();
 		let shell: IShell = {
 			executable: '',
 			args: []
 		};
-		if (this.platform === Platform.Windows) {
-			shell.executable = config.terminal.integrated.shell.windows;
-		} else if (this.platform === Platform.Mac) {
-			shell.executable = config.terminal.integrated.shell.osx;
-			shell.args = config.terminal.integrated.shellArgs.osx;
-		} else if (this.platform === Platform.Linux) {
-			shell.executable = config.terminal.integrated.shell.linux;
-			shell.args = config.terminal.integrated.shellArgs.linux;
+		const integrated = config && config.terminal && config.terminal.integrated;
+		if (integrated && integrated.shell && integrated.shellArgs) {
+			if (this._platform === Platform.Windows) {
+				shell.executable = integrated.shell.windows;
+				shell.args = integrated.shellArgs.windows;
+			} else if (this._platform === Platform.Mac) {
+				shell.executable = integrated.shell.osx;
+				shell.args = integrated.shellArgs.osx;
+			} else if (this._platform === Platform.Linux) {
+				shell.executable = integrated.shell.linux;
+				shell.args = integrated.shellArgs.linux;
+			}
 		}
 		return shell;
 	}
 
 	public isSetLocaleVariables(): boolean {
-		let config = this.configurationService.getConfiguration<ITerminalConfiguration>();
+		let config = this._configurationService.getConfiguration<ITerminalConfiguration>();
 		return config.terminal.integrated.setLocaleVariables;
 	}
 
@@ -186,7 +191,7 @@ export class TerminalConfigHelper {
 	}
 
 	public getCommandsToSkipShell(): string[] {
-		let config = this.configurationService.getConfiguration<ITerminalConfiguration>();
+		let config = this._configurationService.getConfiguration<ITerminalConfiguration>();
 		return config.terminal.integrated.commandsToSkipShell;
 	}
 }

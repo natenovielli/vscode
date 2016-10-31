@@ -4,17 +4,17 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import {onUnexpectedError} from 'vs/base/common/errors';
+import { onUnexpectedError } from 'vs/base/common/errors';
 import { isFalsyOrEmpty } from 'vs/base/common/arrays';
 import { forEach } from 'vs/base/common/collections';
 import Event, { Emitter } from 'vs/base/common/event';
-import {IDisposable, dispose} from 'vs/base/common/lifecycle';
-import {startsWith} from 'vs/base/common/strings';
-import {TPromise} from 'vs/base/common/winjs.base';
-import {ICommonCodeEditor, ICursorSelectionChangedEvent, CursorChangeReason, IModel, IPosition} from 'vs/editor/common/editorCommon';
-import {ISuggestSupport, SuggestRegistry} from 'vs/editor/common/modes';
-import {provideSuggestionItems, getSuggestionComparator} from './suggest';
-import {CompletionModel} from './completionModel';
+import { IDisposable, dispose } from 'vs/base/common/lifecycle';
+import { startsWith } from 'vs/base/common/strings';
+import { TPromise } from 'vs/base/common/winjs.base';
+import { ICommonCodeEditor, ICursorSelectionChangedEvent, CursorChangeReason, IModel, IPosition } from 'vs/editor/common/editorCommon';
+import { ISuggestSupport, SuggestRegistry } from 'vs/editor/common/modes';
+import { provideSuggestionItems, getSuggestionComparator } from './suggest';
+import { CompletionModel } from './completionModel';
 
 export interface ICancelEvent {
 	retrigger: boolean;
@@ -134,7 +134,7 @@ export class Context {
 	}
 }
 
-enum State {
+const enum State {
 	Idle = 0,
 	Manual = 1,
 	Auto = 2
@@ -146,6 +146,7 @@ export class SuggestModel implements IDisposable {
 	private quickSuggestDelay: number;
 	private triggerCharacterListeners: IDisposable[] = [];
 
+	private triggerFromIncompletePromise: TPromise<void>;
 	private triggerAutoSuggestPromise: TPromise<void>;
 	private state: State;
 
@@ -248,6 +249,11 @@ export class SuggestModel implements IDisposable {
 	// --- trigger/retrigger/cancel suggest
 
 	cancel(retrigger: boolean = false): void {
+
+		if (this.triggerFromIncompletePromise) {
+			this.triggerFromIncompletePromise.cancel();
+			this.triggerFromIncompletePromise = null;
+		}
 
 		if (this.triggerAutoSuggestPromise) {
 			this.triggerAutoSuggestPromise.cancel();
@@ -373,12 +379,16 @@ export class SuggestModel implements IDisposable {
 
 	private triggerFromIncomplete(auto: boolean): void {
 
-		this.requestPromise = provideSuggestionItems(this.editor.getModel(), this.editor.getPosition(),
+		if (this.triggerFromIncompletePromise) {
+			this.triggerFromIncompletePromise.cancel();
+		}
+
+		this.triggerFromIncompletePromise = provideSuggestionItems(this.editor.getModel(), this.editor.getPosition(),
 			this.editor.getConfiguration().contribInfo.snippetSuggestions,
 			this.completionModel.incomplete
 		).then(items => {
 
-			this.requestPromise = null;
+			this.triggerFromIncompletePromise = null;
 			if (this.state === State.Idle) {
 				return;
 			}

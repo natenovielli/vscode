@@ -92,13 +92,18 @@
               }
             }
           }
+        },
+        "json.format.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable/disable default JSON formatter (requires restart)"
         }
       }
     }
   },
   "dependencies": {
     "vscode-extension-telemetry": "^0.0.5",
-    "vscode-languageclient": "^2.4.2-next.3",
+    "vscode-languageclient": "^2.4.2-next.22",
     "vscode-nls": "^1.0.7"
   }
 }

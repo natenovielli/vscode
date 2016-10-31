@@ -8,7 +8,7 @@ import { TPromise } from 'vs/base/common/winjs.base';
 import { IAutoFocus, Mode, IModel } from 'vs/base/parts/quickopen/common/quickOpen';
 import { QuickOpenEntry, QuickOpenModel } from 'vs/base/parts/quickopen/browser/quickOpenModel';
 import { QuickOpenHandler } from 'vs/workbench/browser/quickopen';
-import { IExtensionsViewlet, VIEWLET_ID } from './extensions';
+import { IExtensionsViewlet, VIEWLET_ID } from '../common/extensions';
 import { IViewletService } from 'vs/workbench/services/viewlet/common/viewletService';
 
 class SimpleEntry extends QuickOpenEntry {
@@ -25,7 +25,7 @@ class SimpleEntry extends QuickOpenEntry {
 		return this.label;
 	}
 
-	run(mode:Mode):boolean {
+	run(mode: Mode): boolean {
 		if (mode === Mode.PREVIEW) {
 			return false;
 		}
@@ -38,7 +38,7 @@ class SimpleEntry extends QuickOpenEntry {
 
 export class ExtensionsHandler extends QuickOpenHandler {
 
-	constructor(@IViewletService private viewletService: IViewletService) {
+	constructor( @IViewletService private viewletService: IViewletService) {
 		super();
 	}
 
@@ -67,7 +67,7 @@ export class ExtensionsHandler extends QuickOpenHandler {
 
 export class GalleryExtensionsHandler extends QuickOpenHandler {
 
-	constructor(@IViewletService private viewletService: IViewletService) {
+	constructor( @IViewletService private viewletService: IViewletService) {
 		super();
 	}
 

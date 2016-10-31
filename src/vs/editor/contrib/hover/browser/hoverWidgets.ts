@@ -4,15 +4,15 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import {CommonKeybindings} from 'vs/base/common/keyCodes';
-import {IKeyboardEvent} from 'vs/base/browser/keyboardEvent';
-import {toggleClass} from 'vs/base/browser/dom';
-import {Position} from 'vs/editor/common/core/position';
-import {IPosition, IConfigurationChangedEvent} from 'vs/editor/common/editorCommon';
+import { KeyCode } from 'vs/base/common/keyCodes';
+import { IKeyboardEvent } from 'vs/base/browser/keyboardEvent';
+import { toggleClass } from 'vs/base/browser/dom';
+import { Position } from 'vs/editor/common/core/position';
+import { IPosition, IConfigurationChangedEvent } from 'vs/editor/common/editorCommon';
 import * as editorBrowser from 'vs/editor/browser/editorBrowser';
-import {Widget} from 'vs/base/browser/ui/widget';
-import {DomScrollableElement} from 'vs/base/browser/ui/scrollbar/scrollableElement';
-import {IDisposable, dispose} from 'vs/base/common/lifecycle';
+import { Widget } from 'vs/base/browser/ui/widget';
+import { DomScrollableElement } from 'vs/base/browser/ui/scrollbar/scrollableElement';
+import { IDisposable, dispose } from 'vs/base/common/lifecycle';
 
 export class ContentHoverWidget extends Widget implements editorBrowser.IContentWidget {
 
@@ -56,12 +56,12 @@ export class ContentHoverWidget extends Widget implements editorBrowser.IContent
 		this._containerDomNode.appendChild(this.scrollbar.getDomNode());
 
 		this.onkeydown(this._containerDomNode, (e: IKeyboardEvent) => {
-			if (e.equals(CommonKeybindings.ESCAPE)) {
+			if (e.equals(KeyCode.Escape)) {
 				this.hide();
 			}
 		});
 
-		this._register(this._editor.onDidChangeConfiguration((e:IConfigurationChangedEvent) => {
+		this._register(this._editor.onDidChangeConfiguration((e: IConfigurationChangedEvent) => {
 			if (e.fontInfo) {
 				this.updateFont();
 			}
@@ -82,7 +82,7 @@ export class ContentHoverWidget extends Widget implements editorBrowser.IContent
 		return this._containerDomNode;
 	}
 
-	public showAt(position:IPosition, focus: boolean): void {
+	public showAt(position: IPosition, focus: boolean): void {
 		// Position has changed
 		this._showAtPosition = new Position(position.lineNumber, position.column);
 		this.isVisible = true;
@@ -110,7 +110,7 @@ export class ContentHoverWidget extends Widget implements editorBrowser.IContent
 		}
 	}
 
-	public getPosition():editorBrowser.IContentWidgetPosition {
+	public getPosition(): editorBrowser.IContentWidgetPosition {
 		if (this.isVisible) {
 			return {
 				position: this._showAtPosition,
@@ -130,7 +130,7 @@ export class ContentHoverWidget extends Widget implements editorBrowser.IContent
 	}
 
 	private updateFont(): void {
-		const codeTags: HTMLPhraseElement[] = Array.prototype.slice.call(this._domNode.getElementsByTagName('code'));
+		const codeTags: HTMLElement[] = Array.prototype.slice.call(this._domNode.getElementsByTagName('code'));
 		const codeClasses: HTMLElement[] = Array.prototype.slice.call(this._domNode.getElementsByClassName('code'));
 
 		[...codeTags, ...codeClasses].forEach(node => this._editor.applyFontInfo(node));
@@ -147,8 +147,11 @@ export class ContentHoverWidget extends Widget implements editorBrowser.IContent
 
 	private updateMaxHeight(): void {
 		const height = Math.max(this._editor.getLayoutInfo().height / 4, 250);
+		const { fontSize, lineHeight } = this._editor.getConfiguration().fontInfo;
 
-		this._domNode.style.maxHeight = `${ height }px`;
+		this._domNode.style.fontSize = `${fontSize}px`;
+		this._domNode.style.lineHeight = `${lineHeight}px`;
+		this._domNode.style.maxHeight = `${height}px`;
 	}
 }
 
@@ -156,8 +159,8 @@ export class GlyphHoverWidget extends Widget implements editorBrowser.IOverlayWi
 
 	private _id: string;
 	protected _editor: editorBrowser.ICodeEditor;
-	protected _isVisible: boolean;
-	protected _domNode: HTMLElement;
+	private _isVisible: boolean;
+	private _domNode: HTMLElement;
 	protected _showAtLineNumber: number;
 
 	constructor(id: string, editor: editorBrowser.ICodeEditor) {
@@ -167,21 +170,28 @@ export class GlyphHoverWidget extends Widget implements editorBrowser.IOverlayWi
 		this._isVisible = false;
 
 		this._domNode = document.createElement('div');
-		this._domNode.className = 'monaco-editor-hover monaco-editor-background';
-		this._domNode.style.display = 'none';
+		this._domNode.className = 'monaco-editor-hover hidden';
 		this._domNode.setAttribute('aria-hidden', 'true');
 		this._domNode.setAttribute('role', 'presentation');
 
 		this._showAtLineNumber = -1;
 
-		this._editor.applyFontInfo(this._domNode);
-		this._register(this._editor.onDidChangeConfiguration((e:IConfigurationChangedEvent) => {
+		this._register(this._editor.onDidChangeConfiguration((e: IConfigurationChangedEvent) => {
 			if (e.fontInfo) {
-				this._editor.applyFontInfo(this._domNode);
+				this.updateFont();
 			}
 		}));
 
 		this._editor.addOverlayWidget(this);
+	}
+
+	protected get isVisible(): boolean {
+		return this._isVisible;
+	}
+
+	protected set isVisible(value: boolean) {
+		this._isVisible = value;
+		toggleClass(this._domNode, 'hidden', !this._isVisible);
 	}
 
 	public getId(): string {
@@ -195,33 +205,47 @@ export class GlyphHoverWidget extends Widget implements editorBrowser.IOverlayWi
 	public showAt(lineNumber: number): void {
 		this._showAtLineNumber = lineNumber;
 
-		if (!this._isVisible) {
-			this._isVisible = true;
-			this._domNode.style.display = 'block';
+		if (!this.isVisible) {
+			this.isVisible = true;
 		}
 
-		let editorLayout = this._editor.getLayoutInfo();
-		let topForLineNumber = this._editor.getTopForLineNumber(this._showAtLineNumber);
-		let editorScrollTop = this._editor.getScrollTop();
+		const editorLayout = this._editor.getLayoutInfo();
+		const topForLineNumber = this._editor.getTopForLineNumber(this._showAtLineNumber);
+		const editorScrollTop = this._editor.getScrollTop();
+		const lineHeight = this._editor.getConfiguration().lineHeight;
+		const nodeHeight = this._domNode.clientHeight;
+		const top = topForLineNumber - editorScrollTop - ((nodeHeight - lineHeight) / 2);
 
-		this._domNode.style.left = (editorLayout.glyphMarginLeft + editorLayout.glyphMarginWidth) + 'px';
-		this._domNode.style.top = (topForLineNumber - editorScrollTop) + 'px';
+		this._domNode.style.left = `${editorLayout.glyphMarginLeft + editorLayout.glyphMarginWidth}px`;
+		this._domNode.style.top = `${Math.max(Math.round(top), 0)}px`;
 	}
 
 	public hide(): void {
-		if (!this._isVisible) {
+		if (!this.isVisible) {
 			return;
 		}
-		this._isVisible = false;
-		this._domNode.style.display = 'none';
+		this.isVisible = false;
 	}
 
-	public getPosition():editorBrowser.IOverlayWidgetPosition {
+	public getPosition(): editorBrowser.IOverlayWidgetPosition {
 		return null;
 	}
 
 	public dispose(): void {
 		this._editor.removeOverlayWidget(this);
 		super.dispose();
+	}
+
+	private updateFont(): void {
+		const codeTags: HTMLElement[] = Array.prototype.slice.call(this._domNode.getElementsByTagName('code'));
+		const codeClasses: HTMLElement[] = Array.prototype.slice.call(this._domNode.getElementsByClassName('code'));
+
+		[...codeTags, ...codeClasses].forEach(node => this._editor.applyFontInfo(node));
+	}
+
+	protected updateContents(node: Node): void {
+		this._domNode.textContent = '';
+		this._domNode.appendChild(node);
+		this.updateFont();
 	}
 }

@@ -4,23 +4,22 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import {mixin} from 'vs/base/common/objects';
-import {illegalState} from 'vs/base/common/errors';
-import Event, {Emitter} from 'vs/base/common/event';
-import {WorkspaceConfiguration} from 'vscode';
-import {ExtHostConfigurationShape, MainThreadConfigurationShape} from './extHost.protocol';
-// import {ConfigurationTarget} from 'vs/workbench/services/configuration/common/configurationEditing';
+import { mixin } from 'vs/base/common/objects';
+import Event, { Emitter } from 'vs/base/common/event';
+import { WorkspaceConfiguration } from 'vscode';
+import { ExtHostConfigurationShape, MainThreadConfigurationShape } from './extHost.protocol';
+import { ConfigurationTarget } from 'vs/workbench/services/configuration/common/configurationEditing';
 
 export class ExtHostConfiguration extends ExtHostConfigurationShape {
 
 	private _proxy: MainThreadConfigurationShape;
-	private _hasConfig: boolean;
 	private _config: any;
 	private _onDidChangeConfiguration = new Emitter<void>();
 
-	constructor(proxy: MainThreadConfigurationShape) {
+	constructor(proxy: MainThreadConfigurationShape, configuration: any) {
 		super();
 		this._proxy = proxy;
+		this._config = configuration;
 	}
 
 	get onDidChangeConfiguration(): Event<void> {
@@ -29,14 +28,10 @@ export class ExtHostConfiguration extends ExtHostConfigurationShape {
 
 	public $acceptConfigurationChanged(config: any) {
 		this._config = config;
-		this._hasConfig = true;
 		this._onDidChangeConfiguration.fire(undefined);
 	}
 
 	public getConfiguration(section?: string): WorkspaceConfiguration {
-		if (!this._hasConfig) {
-			throw illegalState('missing config');
-		}
 
 		const config = section
 			? ExtHostConfiguration._lookUp(section, this._config)
@@ -52,11 +47,15 @@ export class ExtHostConfiguration extends ExtHostConfigurationShape {
 					result = defaultValue;
 				}
 				return result;
-			// },
-			// update: (key: string, value: any, global: boolean) => {
-			// 	key = section ? `${section}.${key}` : key;
-			// 	const target = global ? ConfigurationTarget.USER : ConfigurationTarget.WORKSPACE;
-			// 	return this._proxy.$updateConfigurationOption(target, key, value);
+			},
+			update: (key: string, value: any, global: boolean = false) => {
+				key = section ? `${section}.${key}` : key;
+				const target = global ? ConfigurationTarget.USER : ConfigurationTarget.WORKSPACE;
+				if (value !== void 0) {
+					return this._proxy.$updateConfigurationOption(target, key, value);
+				} else {
+					return this._proxy.$removeConfigurationOption(target, key);
+				}
 			}
 		};
 

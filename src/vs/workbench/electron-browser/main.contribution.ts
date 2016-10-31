@@ -5,37 +5,43 @@
 
 'use strict';
 
-import {Registry} from 'vs/platform/platform';
+import { Registry } from 'vs/platform/platform';
 import nls = require('vs/nls');
-import {SyncActionDescriptor} from 'vs/platform/actions/common/actions';
-import {IConfigurationRegistry, Extensions as ConfigurationExtensions} from 'vs/platform/configuration/common/configurationRegistry';
-import {IWorkbenchActionRegistry, Extensions} from 'vs/workbench/common/actionRegistry';
-import {KeyMod, KeyCode} from 'vs/base/common/keyCodes';
+import product from 'vs/platform/product';
+import { SyncActionDescriptor } from 'vs/platform/actions/common/actions';
+import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from 'vs/platform/configuration/common/configurationRegistry';
+import { IWorkbenchActionRegistry, Extensions } from 'vs/workbench/common/actionRegistry';
+import { KeyMod, KeyChord, KeyCode } from 'vs/base/common/keyCodes';
 import platform = require('vs/base/common/platform');
-import {IKeybindings} from 'vs/platform/keybinding/common/keybinding';
-import {KeybindingsRegistry} from 'vs/platform/keybinding/common/keybindingsRegistry';
-import {IWindowService} from 'vs/workbench/services/window/electron-browser/windowService';
-import {CloseEditorAction, ReloadWindowAction, ShowStartupPerformance, ZoomResetAction, ZoomOutAction, ZoomInAction, ToggleDevToolsAction, ToggleFullScreenAction, ToggleMenuBarAction, OpenRecentAction, CloseFolderAction, CloseWindowAction, NewWindowAction, CloseMessagesAction} from 'vs/workbench/electron-browser/actions';
-import {MessagesVisibleContext, NoEditorsVisibleContext} from 'vs/workbench/electron-browser/workbench';
+import { IKeybindings } from 'vs/platform/keybinding/common/keybinding';
+import { KeybindingsRegistry } from 'vs/platform/keybinding/common/keybindingsRegistry';
+import { IWindowService } from 'vs/workbench/services/window/electron-browser/windowService';
+import { CloseEditorAction, ReloadWindowAction, ShowStartupPerformance, ReportIssueAction, ZoomResetAction, ZoomOutAction, ZoomInAction, ToggleDevToolsAction, ToggleFullScreenAction, ToggleMenuBarAction, OpenRecentAction, CloseFolderAction, CloseWindowAction, SwitchWindow, NewWindowAction, CloseMessagesAction } from 'vs/workbench/electron-browser/actions';
+import { MessagesVisibleContext, NoEditorsVisibleContext } from 'vs/workbench/electron-browser/workbench';
 
-const closeEditorOrWindowKeybindings: IKeybindings = { primary: KeyMod.CtrlCmd | KeyCode.KEY_W, win: { primary: KeyMod.CtrlCmd | KeyCode.F4, secondary: [KeyMod.CtrlCmd | KeyCode.KEY_W] }};
+const closeEditorOrWindowKeybindings: IKeybindings = { primary: KeyMod.CtrlCmd | KeyCode.KEY_W, win: { primary: KeyMod.CtrlCmd | KeyCode.F4, secondary: [KeyMod.CtrlCmd | KeyCode.KEY_W] } };
 
 // Contribute Global Actions
 const viewCategory = nls.localize('view', "View");
+const helpCategory = nls.localize('help', "Help");
 const developerCategory = nls.localize('developer', "Developer");
 const fileCategory = nls.localize('file', "File");
-const workbenchActionsRegistry = <IWorkbenchActionRegistry>Registry.as(Extensions.WorkbenchActions);
+const workbenchActionsRegistry = Registry.as<IWorkbenchActionRegistry>(Extensions.WorkbenchActions);
 workbenchActionsRegistry.registerWorkbenchAction(new SyncActionDescriptor(NewWindowAction, NewWindowAction.ID, NewWindowAction.LABEL, { primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KEY_N }), 'New Window');
 workbenchActionsRegistry.registerWorkbenchAction(new SyncActionDescriptor(CloseWindowAction, CloseWindowAction.ID, CloseWindowAction.LABEL, { primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KEY_W }), 'Close Window');
-workbenchActionsRegistry.registerWorkbenchAction(new SyncActionDescriptor(CloseFolderAction, CloseFolderAction.ID, CloseFolderAction.LABEL, { primary: KeyMod.chord(KeyMod.CtrlCmd | KeyCode.KEY_K, KeyCode.KEY_F) }), 'File: Close Folder', fileCategory);
+workbenchActionsRegistry.registerWorkbenchAction(new SyncActionDescriptor(SwitchWindow, SwitchWindow.ID, SwitchWindow.LABEL), 'Switch Window');
+workbenchActionsRegistry.registerWorkbenchAction(new SyncActionDescriptor(CloseFolderAction, CloseFolderAction.ID, CloseFolderAction.LABEL, { primary: KeyChord(KeyMod.CtrlCmd | KeyCode.KEY_K, KeyCode.KEY_F) }), 'File: Close Folder', fileCategory);
 workbenchActionsRegistry.registerWorkbenchAction(new SyncActionDescriptor(OpenRecentAction, OpenRecentAction.ID, OpenRecentAction.LABEL, { primary: KeyMod.CtrlCmd | KeyCode.KEY_R, mac: { primary: KeyMod.WinCtrl | KeyCode.KEY_R } }), 'File: Open Recent', fileCategory);
 workbenchActionsRegistry.registerWorkbenchAction(new SyncActionDescriptor(ToggleDevToolsAction, ToggleDevToolsAction.ID, ToggleDevToolsAction.LABEL), 'Developer: Toggle Developer Tools', developerCategory);
+if (!!product.reportIssueUrl) {
+	workbenchActionsRegistry.registerWorkbenchAction(new SyncActionDescriptor(ReportIssueAction, ReportIssueAction.ID, ReportIssueAction.LABEL), 'Help: Report Issues', helpCategory);
+}
 workbenchActionsRegistry.registerWorkbenchAction(new SyncActionDescriptor(ZoomInAction, ZoomInAction.ID, ZoomInAction.LABEL, { primary: KeyMod.CtrlCmd | KeyCode.US_EQUAL, secondary: [KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.US_EQUAL] }), 'View: Zoom In', viewCategory);
 workbenchActionsRegistry.registerWorkbenchAction(
 	new SyncActionDescriptor(ZoomOutAction, ZoomOutAction.ID, ZoomOutAction.LABEL, {
 		primary: KeyMod.CtrlCmd | KeyCode.US_MINUS,
 		secondary: [KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.US_MINUS],
-		linux: { primary: KeyMod.CtrlCmd | KeyCode.US_MINUS, secondary: []}
+		linux: { primary: KeyMod.CtrlCmd | KeyCode.US_MINUS, secondary: [] }
 	}), 'View: Zoom Out', viewCategory
 );
 workbenchActionsRegistry.registerWorkbenchAction(new SyncActionDescriptor(ZoomResetAction, ZoomResetAction.ID, ZoomResetAction.LABEL), 'View: Reset Zoom', viewCategory);
@@ -61,7 +67,7 @@ KeybindingsRegistry.registerCommandAndKeybindingRule({
 });
 
 // Configuration: Workbench
-const configurationRegistry = <IConfigurationRegistry>Registry.as(ConfigurationExtensions.Configuration);
+const configurationRegistry = Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration);
 configurationRegistry.registerConfiguration({
 	'id': 'workbench',
 	'order': 7,
@@ -71,6 +77,11 @@ configurationRegistry.registerConfiguration({
 		'workbench.editor.showTabs': {
 			'type': 'boolean',
 			'description': nls.localize('showEditorTabs', "Controls if opened editors should show in tabs or not."),
+			'default': true
+		},
+		'workbench.editor.showIcons': {
+			'type': 'boolean',
+			'description': nls.localize('showIcons', "Controls if opened editors should show with an icon or not. This requires an icon theme to be enabled as well."),
 			'default': true
 		},
 		'workbench.editor.enablePreview': {
@@ -98,6 +109,17 @@ configurationRegistry.registerConfiguration({
 			'type': 'boolean',
 			'description': nls.localize('openDefaultSettings', "Controls if opening settings also opens an editor showing all default settings."),
 			'default': true
+		},
+		'workbench.sideBar.location': {
+			'type': 'string',
+			'enum': ['left', 'right'],
+			'default': 'left',
+			'description': nls.localize('sideBarLocation', "Controls the location of the sidebar. It can either show on the left or right of the workbench.")
+		},
+		'workbench.statusBar.visible': {
+			'type': 'boolean',
+			'default': true,
+			'description': nls.localize('statusBarVisibility', "Controls the visibility of the status bar at the bottom of the workbench.")
 		}
 	}
 });
@@ -129,22 +151,6 @@ configurationRegistry.registerConfiguration({
 			'type': 'number',
 			'default': 0,
 			'description': nls.localize('zoomLevel', "Adjust the zoom level of the window. The original size is 0 and each increment above (e.g. 1) or below (e.g. -1) represents zooming 20% larger or smaller. You can also enter decimals to adjust the zoom level with a finer granularity.")
-		}
-	}
-});
-
-// Configuration: Update
-configurationRegistry.registerConfiguration({
-	'id': 'update',
-	'order': 15,
-	'title': nls.localize('updateConfigurationTitle', "Update"),
-	'type': 'object',
-	'properties': {
-		'update.channel': {
-			'type': 'string',
-			'enum': ['none', 'default'],
-			'default': 'default',
-			'description': nls.localize('updateChannel', "Configure whether you receive automatic updates from an update channel. Requires a restart after change.")
 		}
 	}
 });

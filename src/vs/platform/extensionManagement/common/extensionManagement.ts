@@ -12,6 +12,9 @@ import { IPager } from 'vs/base/common/paging';
 import { createDecorator } from 'vs/platform/instantiation/common/instantiation';
 import { IRequestContext } from 'vs/base/node/request';
 
+export const EXTENSION_IDENTIFIER_PATTERN = '^[a-z0-9A-Z][a-z0-9\-A-Z]*\\.[a-z0-9A-Z][a-z0-9\-A-Z]*$';
+export const EXTENSION_IDENTIFIER_REGEX = new RegExp(EXTENSION_IDENTIFIER_PATTERN);
+
 export interface ICommand {
 	command: string;
 	title: string;
@@ -21,6 +24,7 @@ export interface ICommand {
 export interface IConfigurationProperty {
 	description: string;
 	type: string | string[];
+	default?: any;
 }
 
 export interface IConfiguration {
@@ -95,6 +99,7 @@ export interface IExtensionManifest {
 	icon?: string;
 	categories?: string[];
 	activationEvents?: string[];
+	extensionDependencies?: string[];
 	contributes?: IExtensionContributions;
 }
 
@@ -103,9 +108,15 @@ export interface IExtensionIdentity {
 	publisher: string;
 }
 
+export interface IGalleryExtensionProperties {
+	dependencies?: string[];
+	engine?: string;
+}
+
 export interface IGalleryExtensionAssets {
 	manifest: string;
 	readme: string;
+	changelog: string;
 	download: string;
 	icon: string;
 	iconFallback: string;
@@ -126,7 +137,7 @@ export interface IGalleryExtension {
 	rating: number;
 	ratingCount: number;
 	assets: IGalleryExtensionAssets;
-	downloadHeaders: { [key: string]: string; };
+	properties: IGalleryExtensionProperties;
 }
 
 export interface IGalleryMetadata {
@@ -135,12 +146,19 @@ export interface IGalleryMetadata {
 	publisherDisplayName: string;
 }
 
+export enum LocalExtensionType {
+	System,
+	User
+}
+
 export interface ILocalExtension {
+	type: LocalExtensionType;
 	id: string;
 	manifest: IExtensionManifest;
 	metadata: IGalleryMetadata;
 	path: string;
 	readmeUrl: string;
+	changelogUrl: string;
 }
 
 export const IExtensionManagementService = createDecorator<IExtensionManagementService>('extensionManagementService');
@@ -174,13 +192,32 @@ export interface IQueryOptions {
 export interface IExtensionGalleryService {
 	_serviceBrand: any;
 	isEnabled(): boolean;
+	getRequestHeaders(): TPromise<{ [key: string]: string; }>;
 	query(options?: IQueryOptions): TPromise<IPager<IGalleryExtension>>;
 	download(extension: IGalleryExtension): TPromise<string>;
 	getAsset(url: string): TPromise<IRequestContext>;
+	loadCompatibleVersion(extension: IGalleryExtension): TPromise<IGalleryExtension>;
+	getAllDependencies(extension: IGalleryExtension): TPromise<IGalleryExtension[]>;
 }
 
-export type InstallExtensionEvent = { id: string; gallery?: IGalleryExtension; };
-export type DidInstallExtensionEvent = { id: string; local?: ILocalExtension; error?: Error; };
+export interface InstallExtensionEvent {
+	id: string;
+	zipPath?: string;
+	gallery?: IGalleryExtension;
+}
+
+export interface DidInstallExtensionEvent {
+	id: string;
+	zipPath?: string;
+	gallery?: IGalleryExtension;
+	local?: ILocalExtension;
+	error?: Error;
+}
+
+export interface DidUninstallExtensionEvent {
+	id: string;
+	error?: Error;
+}
 
 export interface IExtensionManagementService {
 	_serviceBrand: any;
@@ -188,12 +225,12 @@ export interface IExtensionManagementService {
 	onInstallExtension: Event<InstallExtensionEvent>;
 	onDidInstallExtension: Event<DidInstallExtensionEvent>;
 	onUninstallExtension: Event<string>;
-	onDidUninstallExtension: Event<string>;
+	onDidUninstallExtension: Event<DidUninstallExtensionEvent>;
 
 	install(zipPath: string): TPromise<void>;
-	installFromGallery(extension: IGalleryExtension): TPromise<void>;
+	installFromGallery(extension: IGalleryExtension, promptToInstallDependencies?: boolean): TPromise<void>;
 	uninstall(extension: ILocalExtension): TPromise<void>;
-	getInstalled(): TPromise<ILocalExtension[]>;
+	getInstalled(type?: LocalExtensionType): TPromise<ILocalExtension[]>;
 }
 
 export const IExtensionTipsService = createDecorator<IExtensionTipsService>('extensionTipsService');
@@ -201,6 +238,7 @@ export const IExtensionTipsService = createDecorator<IExtensionTipsService>('ext
 export interface IExtensionTipsService {
 	_serviceBrand: any;
 	getRecommendations(): string[];
+	getWorkspaceRecommendations(): string[];
 }
 
 export const ExtensionsLabel = nls.localize('extensions', "Extensions");

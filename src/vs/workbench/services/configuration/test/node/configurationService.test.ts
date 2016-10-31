@@ -9,19 +9,19 @@ import assert = require('assert');
 import os = require('os');
 import path = require('path');
 import fs = require('fs');
-import {TPromise} from 'vs/base/common/winjs.base';
-import {Registry} from 'vs/platform/platform';
-import {ParsedArgs} from 'vs/platform/environment/node/argv';
-import {WorkspaceContextService} from 'vs/platform/workspace/common/workspace';
-import {EnvironmentService} from 'vs/platform/environment/node/environmentService';
-import {parseArgs} from 'vs/platform/environment/node/argv';
+import { TPromise } from 'vs/base/common/winjs.base';
+import { Registry } from 'vs/platform/platform';
+import { ParsedArgs } from 'vs/platform/environment/node/argv';
+import { WorkspaceContextService } from 'vs/platform/workspace/common/workspace';
+import { EnvironmentService } from 'vs/platform/environment/node/environmentService';
+import { parseArgs } from 'vs/platform/environment/node/argv';
 import extfs = require('vs/base/node/extfs');
-import {TestEventService} from 'vs/test/utils/servicesTestUtils';
+import { TestEventService } from 'vs/test/utils/servicesTestUtils';
 import uuid = require('vs/base/common/uuid');
-import {IConfigurationRegistry, Extensions as ConfigurationExtensions} from 'vs/platform/configuration/common/configurationRegistry';
-import {WorkspaceConfigurationService} from 'vs/workbench/services/configuration/node/configurationService';
+import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from 'vs/platform/configuration/common/configurationRegistry';
+import { WorkspaceConfigurationService } from 'vs/workbench/services/configuration/node/configurationService';
 import URI from 'vs/base/common/uri';
-import {EventType as FileEventType, FileChangeType, FileChangesEvent} from 'vs/platform/files/common/files';
+import { EventType as FileEventType, FileChangeType, FileChangesEvent } from 'vs/platform/files/common/files';
 
 class SettingsTestEnvironmentService extends EnvironmentService {
 
@@ -108,6 +108,31 @@ suite('WorkspaceConfigurationService - Node', () => {
 		});
 	});
 
+	test('reload configuration emits events', (done: () => void) => {
+		createWorkspace((workspaceDir, globalSettingsFile, cleanUp) => {
+			return createService(workspaceDir, globalSettingsFile).then(service => {
+				fs.writeFileSync(globalSettingsFile, '{ "testworkbench.editor.tabs": true }');
+
+				return service.initialize().then(() => {
+					service.onDidUpdateConfiguration(event => {
+						const config = service.getConfiguration<{ testworkbench: { editor: { tabs: boolean } } }>();
+						assert.equal(config.testworkbench.editor.tabs, false);
+
+						service.dispose();
+
+						cleanUp(done);
+					});
+
+					fs.writeFileSync(globalSettingsFile, '{ "testworkbench.editor.tabs": false }');
+
+					// this has to trigger the event since the config changes
+					service.reloadConfiguration().done();
+				});
+
+			});
+		});
+	});
+
 	test('globals override defaults', (done: () => void) => {
 		interface ITestSetting {
 			workspace: {
@@ -185,27 +210,6 @@ suite('WorkspaceConfigurationService - Node', () => {
 		});
 	});
 
-	test('global change triggers event', (done: () => void) => {
-		createWorkspace((workspaceDir, globalSettingsFile, cleanUp) => {
-			return createService(workspaceDir, globalSettingsFile).then(service => {
-				fs.writeFileSync(globalSettingsFile, '{ "testworkbench.editor.icons": false }');
-				service.reloadConfiguration().then(() => {
-					service.onDidUpdateConfiguration(event => {
-						const config = service.getConfiguration<{ testworkbench: { editor: { icons: boolean } } }>();
-						assert.equal(config.testworkbench.editor.icons, true);
-						assert.equal(event.config.testworkbench.editor.icons, true);
-
-						service.dispose();
-
-						cleanUp(done);
-					});
-
-					fs.writeFileSync(globalSettingsFile, '{ "testworkbench.editor.icons": true }');
-				});
-			});
-		});
-	});
-
 	test('workspace change triggers event', (done: () => void) => {
 		createWorkspace((workspaceDir, globalSettingsFile, cleanUp) => {
 			const workspaceContextService = new WorkspaceContextService({ resource: URI.file(workspaceDir) });
@@ -234,14 +238,6 @@ suite('WorkspaceConfigurationService - Node', () => {
 	});
 
 	test('lookup', (done: () => void) => {
-		interface ILookupTestSetting {
-			workspaceLookup: {
-				service: {
-					testSetting: string;
-				}
-			};
-		}
-
 		const configurationRegistry = <IConfigurationRegistry>Registry.as(ConfigurationExtensions.Configuration);
 		configurationRegistry.registerConfiguration({
 			'id': '_test',

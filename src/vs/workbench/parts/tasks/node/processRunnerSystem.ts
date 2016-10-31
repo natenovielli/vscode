@@ -18,7 +18,7 @@ import { TerminateResponse, SuccessData, ErrorData } from 'vs/base/common/proces
 import { LineProcess, LineData } from 'vs/base/node/processes';
 
 import { IOutputService, IOutputChannel } from 'vs/workbench/parts/output/common/output';
-import { ISystemVariables } from 'vs/base/common/parsers';
+import { IConfigurationResolverService } from 'vs/workbench/services/configurationResolver/common/configurationResolver';
 
 import { IMarkerService } from 'vs/platform/markers/common/markers';
 import { ValidationStatus } from 'vs/base/common/parsers';
@@ -30,18 +30,18 @@ import { StartStopProblemCollector, WatchingProblemCollector, ProblemCollectorEv
 import { ITaskSystem, ITaskSummary, ITaskExecuteResult, TaskExecuteKind, TaskError, TaskErrors, TaskRunnerConfiguration, TaskDescription, CommandOptions, ShowOutput, TelemetryEvent, Triggers, TaskSystemEvents, TaskEvent, TaskType } from 'vs/workbench/parts/tasks/common/taskSystem';
 import * as FileConfig from './processRunnerConfiguration';
 
-import {IDisposable, dispose} from 'vs/base/common/lifecycle';
+import { IDisposable, dispose } from 'vs/base/common/lifecycle';
 
 export class ProcessRunnerSystem extends EventEmitter implements ITaskSystem {
 
 	public static TelemetryEventName: string = 'taskService';
 
 	private fileConfig: FileConfig.ExternalTaskRunnerConfiguration;
-	private variables: ISystemVariables;
 	private markerService: IMarkerService;
 	private modelService: IModelService;
 	private outputService: IOutputService;
 	private telemetryService: ITelemetryService;
+	private configurationResolverService: IConfigurationResolverService;
 
 	private validationStatus: ValidationStatus;
 	private defaultBuildTaskIdentifier: string;
@@ -54,14 +54,15 @@ export class ProcessRunnerSystem extends EventEmitter implements ITaskSystem {
 	private activeTaskIdentifier: string;
 	private activeTaskPromise: TPromise<ITaskSummary>;
 
-	constructor(fileConfig:FileConfig.ExternalTaskRunnerConfiguration, variables:ISystemVariables, markerService:IMarkerService, modelService: IModelService, telemetryService: ITelemetryService, outputService:IOutputService, outputChannelId:string, clearOutput: boolean = true) {
+	constructor(fileConfig: FileConfig.ExternalTaskRunnerConfiguration, markerService: IMarkerService, modelService: IModelService, telemetryService: ITelemetryService,
+		outputService: IOutputService, configurationResolverService: IConfigurationResolverService, outputChannelId: string, clearOutput: boolean = true) {
 		super();
 		this.fileConfig = fileConfig;
-		this.variables = variables;
 		this.markerService = markerService;
 		this.modelService = modelService;
 		this.outputService = outputService;
 		this.telemetryService = telemetryService;
+		this.configurationResolverService = configurationResolverService;
 
 		this.defaultBuildTaskIdentifier = null;
 		this.defaultTestTaskIdentifier = null;
@@ -152,7 +153,7 @@ export class ProcessRunnerSystem extends EventEmitter implements ITaskSystem {
 		return TPromise.as({ success: true });
 	}
 
-	public tasks():TPromise<TaskDescription[]> {
+	public tasks(): TPromise<TaskDescription[]> {
 		let result: TaskDescription[];
 		if (!this.configuration || !this.configuration.tasks) {
 			result = [];
@@ -252,7 +253,7 @@ export class ProcessRunnerSystem extends EventEmitter implements ITaskSystem {
 				this.emit(TaskSystemEvents.Inactive, event);
 			}));
 			watchingProblemMatcher.aboutToStart();
-			let delayer:Async.Delayer<any> = null;
+			let delayer: Async.Delayer<any> = null;
 			this.activeTaskIdentifier = task.id;
 			this.activeTaskPromise = this.childProcess.start().then((success): ITaskSummary => {
 				this.childProcessEnded();
@@ -296,12 +297,12 @@ export class ProcessRunnerSystem extends EventEmitter implements ITaskSystem {
 				});
 			});
 			let result: ITaskExecuteResult = (<any>task).tscWatch
-				? { kind: TaskExecuteKind.Started, started: { restartOnFileChanges: '**/*.ts'} , promise: this.activeTaskPromise }
+				? { kind: TaskExecuteKind.Started, started: { restartOnFileChanges: '**/*.ts' }, promise: this.activeTaskPromise }
 				: { kind: TaskExecuteKind.Started, started: {}, promise: this.activeTaskPromise };
 			return result;
 		} else {
 			let event: TaskEvent = { taskId: task.id, taskName: task.name, type: TaskType.SingleRun };
-			this.emit(TaskSystemEvents.Active, event );
+			this.emit(TaskSystemEvents.Active, event);
 			let startStopProblemMatcher = new StartStopProblemCollector(this.resolveMatchers(task.problemMatchers), this.markerService, this.modelService);
 			this.activeTaskIdentifier = task.id;
 			this.activeTaskPromise = this.childProcess.start().then((success): ITaskSummary => {
@@ -338,7 +339,7 @@ export class ProcessRunnerSystem extends EventEmitter implements ITaskSystem {
 	private handleError(task: TaskDescription, error: ErrorData): Promise {
 		let makeVisible = false;
 		if (error.error && !error.terminated) {
-			let args:string = this.configuration.args ? this.configuration.args.join(' ') : '';
+			let args: string = this.configuration.args ? this.configuration.args.join(' ') : '';
 			this.log(nls.localize('TaskRunnerSystem.childProcessError', 'Failed to launch external program {0} {1}.', this.configuration.command, args));
 			this.outputChannel.append(error.error.message);
 			makeVisible = true;
@@ -383,7 +384,7 @@ export class ProcessRunnerSystem extends EventEmitter implements ITaskSystem {
 		return result;
 	}
 
-	private resolveVariables(value:string[]): string[] {
+	private resolveVariables(value: string[]): string[] {
 		return value.map(s => this.resolveVariable(s));
 	}
 
@@ -391,7 +392,7 @@ export class ProcessRunnerSystem extends EventEmitter implements ITaskSystem {
 		if (values.length === 0) {
 			return values;
 		}
-		let result:T[] = [];
+		let result: T[] = [];
 		values.forEach((matcher) => {
 			if (!matcher.filePrefix) {
 				result.push(matcher);
@@ -405,10 +406,10 @@ export class ProcessRunnerSystem extends EventEmitter implements ITaskSystem {
 	}
 
 	private resolveVariable(value: string): string {
-		return this.variables.resolve(value);
+		return this.configurationResolverService.resolve(value);
 	}
 
-	public log(value: string): void  {
+	public log(value: string): void {
 		this.outputChannel.append(value + '\n');
 	}
 

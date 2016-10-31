@@ -6,15 +6,17 @@
 			"type": "node",
 			"request": "launch",
 			"program": "${workspaceRoot}/node_modules/mocha/bin/_mocha",
+			"runtimeExecutable": "${execPath}",
 			"stopOnEntry": false,
 			"args": [
 				"--timeout",
-				"999999",
-				"Emmet"
+				"999999"
 			],
 			"cwd": "${workspaceRoot}",
 			"runtimeArgs": [],
-			"env": {},
+			"env": {
+				"ELECTRON_RUN_AS_NODE": "true"
+			},
 			"sourceMaps": true,
 			"outDir": "${workspaceRoot}/out"
 		},
@@ -31,6 +33,14 @@
 			"type": "node",
 			"request": "attach",
 			"port": 5871,
+			"sourceMaps": true,
+			"outDir": "${workspaceRoot}/out"
+		},
+		{
+			"name": "Attach to CLI Process",
+			"type": "node",
+			"request": "attach",
+			"port": 5874,
 			"sourceMaps": true,
 			"outDir": "${workspaceRoot}/out"
 		},
@@ -90,11 +100,9 @@
 			"request": "launch",
 			"program": "${workspaceRoot}/build/lib/monaco.js",
 			"stopOnEntry": false,
-			"args": [
-			],
+			"args": [],
 			"cwd": "${workspaceRoot}/build/lib"
 			// ,
-
 			// "port": 5870,
 			// "sourceMaps": true,
 			// "outDir": "${workspaceRoot}/out"

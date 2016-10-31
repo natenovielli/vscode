@@ -12,14 +12,17 @@ import { Action } from 'vs/base/common/actions';
 import { isPromiseCanceledError, create as createError } from 'vs/base/common/errors';
 import * as mime from 'vs/base/common/mime';
 import * as paths from 'vs/base/common/paths';
+import { once } from 'vs/base/common/event';
 import { EventEmitter } from 'vs/base/common/eventEmitter';
 import { EditorInput } from 'vs/workbench/common/editor';
-import { IFileStatus, IGitServiceError, GitErrorCodes, Status, StatusType, AutoFetcherState, IGitConfiguration, IAutoFetcher, ServiceEvents, ServiceState,
-	IModel, IGitOperation, IRawGitService, IGitService, IGitCredentialScope, RawServiceState, ServiceOperations, IPushOptions, ICommit, IRawStatus } from 'vs/workbench/parts/git/common/git';
+import {
+	IFileStatus, IGitServiceError, GitErrorCodes, Status, StatusType, AutoFetcherState, IGitConfiguration, IAutoFetcher, ServiceEvents, ServiceState,
+	IModel, IGitOperation, IRawGitService, IGitService, RawServiceState, ServiceOperations, IPushOptions, ICommit, IRawStatus
+} from 'vs/workbench/parts/git/common/git';
 import { Model } from 'vs/workbench/parts/git/common/gitModel';
 import { NativeGitIndexStringEditorInput, GitIndexDiffEditorInput, GitWorkingTreeDiffEditorInput, GitDiffEditorInput } from 'vs/workbench/parts/git/browser/gitEditorInputs';
 import { GitOperation } from 'vs/workbench/parts/git/browser/gitOperations';
-import { EventType as WorkbenchFileEventType, TextFileChangeEvent } from 'vs/workbench/parts/files/common/files';
+import { TextFileModelChangeEvent, ITextFileService } from 'vs/workbench/services/textfile/common/textfiles';
 import { IFileService, EventType as FileEventType, FileChangesEvent, FileChangeType } from 'vs/platform/files/common/files';
 import { ThrottledDelayer, PeriodThrottledDelayer } from 'vs/base/common/async';
 import severity from 'vs/base/common/severity';
@@ -33,7 +36,6 @@ import { IWorkspaceContextService } from 'vs/platform/workspace/common/workspace
 import { ILifecycleService } from 'vs/platform/lifecycle/common/lifecycle';
 import URI from 'vs/base/common/uri';
 import * as semver from 'semver';
-import { shell } from 'electron';
 import { IStorageService, StorageScope } from 'vs/platform/storage/common/storage';
 import Event from 'vs/base/common/event';
 import { domEvent } from 'vs/base/browser/event';
@@ -132,7 +134,8 @@ class EditorInputCache {
 					return TPromise.as(new GitDiffEditorInput(localize('gitMergeChanges', "{0} (merge) ↔ {1}", fileSegment, fileSegment), localize('gitMergeChangesDesc', "{0} - Merge changes", folderSegment), leftInput, rightInput, status));
 			}
 		}).then((editorInput: EditorInput) => {
-			editorInput.addOneTimeDisposableListener('dispose', () => {
+			const onceDispose = once(editorInput.onDispose);
+			onceDispose(() => {
 				delete this.cache[status.getId()];
 			});
 
@@ -347,7 +350,8 @@ export class AutoFetcher implements IAutoFetcher, IDisposable {
 	private loop(): void {
 		this._state = AutoFetcherState.Fetching;
 
-		const remotes = this.gitService.getModel().getRemotes();
+		const model = this.gitService.getModel();
+		const remotes = model ? model.getRemotes() : [];
 
 		if (remotes.length === 0) {
 			this.timeout = AutoFetcher.MIN_TIMEOUT;
@@ -378,22 +382,18 @@ export class AutoFetcher implements IAutoFetcher, IDisposable {
 	}
 }
 
-interface IGitCredentialRequest {
-	guid: string;
-	scope: IGitCredentialScope;
-}
-
 const IgnoreOldGitStorageKey = 'settings.workspace.git.ignoreOld';
 
 export class GitService extends EventEmitter
 	implements
-		IGitService {
+	IGitService {
 
 	_serviceBrand: any;
 
 	private eventService: IEventService;
 	private contextService: IWorkspaceContextService;
 	private messageService: IMessageService;
+	private textFileService: ITextFileService;
 	private instantiationService: IInstantiationService;
 	private editorService: IWorkbenchEditorService;
 	private lifecycleService: ILifecycleService;
@@ -410,7 +410,6 @@ export class GitService extends EventEmitter
 	private reactiveStatusDelayer: PeriodThrottledDelayer<IModel>;
 	private autoFetcher: AutoFetcher;
 	private isStatusPending = false;
-	private isFocused = true;
 
 	private _allowHugeRepositories: boolean;
 	get allowHugeRepositories(): boolean { return this._allowHugeRepositories; }
@@ -431,6 +430,7 @@ export class GitService extends EventEmitter
 		@IMessageService messageService: IMessageService,
 		@IWorkbenchEditorService editorService: IWorkbenchEditorService,
 		@IOutputService outputService: IOutputService,
+		@ITextFileService textFileService: ITextFileService,
 		@IWorkspaceContextService contextService: IWorkspaceContextService,
 		@ILifecycleService lifecycleService: ILifecycleService,
 		@IStorageService storageService: IStorageService,
@@ -442,6 +442,7 @@ export class GitService extends EventEmitter
 		this.eventService = eventService;
 		this.messageService = messageService;
 		this.editorService = editorService;
+		this.textFileService = textFileService;
 		this.outputService = outputService;
 		this.contextService = contextService;
 		this.lifecycleService = lifecycleService;
@@ -480,7 +481,7 @@ export class GitService extends EventEmitter
 							message: localize('updateGit', "You seem to have git {0} installed. Code works best with git >=2.0.0.", version),
 							actions: [
 								new Action('downloadLatest', localize('download', "Download"), '', true, () => {
-									shell.openExternal('https://git-scm.com/');
+									window.open('https://git-scm.com/');
 									return null;
 								}),
 								new Action('neverShowAgain', localize('neverShowAgain', "Don't show again"), null, true, () => {
@@ -498,8 +499,8 @@ export class GitService extends EventEmitter
 
 	private registerListeners(): void {
 		this.toDispose.push(this.eventService.addListener2(FileEventType.FILE_CHANGES, (e) => this.onFileChanges(e)));
-		this.toDispose.push(this.eventService.addListener2(WorkbenchFileEventType.FILE_SAVED, (e) => this.onTextFileChange(e)));
-		this.toDispose.push(this.eventService.addListener2(WorkbenchFileEventType.FILE_REVERTED, (e) => this.onTextFileChange(e)));
+		this.toDispose.push(this.textFileService.models.onModelSaved((e) => this.onTextFileChange(e)));
+		this.toDispose.push(this.textFileService.models.onModelReverted((e) => this.onTextFileChange(e)));
 		this.toDispose.push(this.configurationService.onDidUpdateConfiguration(() => {
 			if (this._allowHugeRepositories) {
 				return;
@@ -516,18 +517,13 @@ export class GitService extends EventEmitter
 
 		const focusEvent = domEvent(window, 'focus');
 		this.toDispose.push(focusEvent(() => {
-			this.isFocused = true;
-
 			if (this.isStatusPending) {
 				this.triggerAutoStatus();
 			}
 		}));
-
-		const blurEvent = domEvent(window, 'blur');
-		this.toDispose.push(blurEvent(() => this.isFocused = false));
 	}
 
-	private onTextFileChange(e: TextFileChangeEvent): void {
+	private onTextFileChange(e: TextFileModelChangeEvent): void {
 		var shouldTriggerStatus = paths.basename(e.resource.fsPath) === '.gitignore';
 
 		if (!shouldTriggerStatus) {
@@ -613,7 +609,7 @@ export class GitService extends EventEmitter
 	private triggerAutoStatus(force = false): void {
 		this.isStatusPending = true;
 
-		if (!this.isFocused && !force) {
+		if (!document.hasFocus() && !force) {
 			return;
 		}
 

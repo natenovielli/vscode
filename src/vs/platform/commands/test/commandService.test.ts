@@ -5,12 +5,13 @@
 'use strict';
 
 import * as assert from 'assert';
-import {IDisposable} from 'vs/base/common/lifecycle';
-import {TPromise} from 'vs/base/common/winjs.base';
-import {CommandsRegistry} from 'vs/platform/commands/common/commands';
-import {CommandService} from 'vs/platform/commands/common/commandService';
-import {IExtensionService} from 'vs/platform/extensions/common/extensions';
-import {InstantiationService} from 'vs/platform/instantiation/common/instantiationService';
+import { IDisposable } from 'vs/base/common/lifecycle';
+import { TPromise } from 'vs/base/common/winjs.base';
+import { CommandsRegistry } from 'vs/platform/commands/common/commands';
+import { CommandService } from 'vs/platform/commands/common/commandService';
+import { IExtensionService, ExtensionPointContribution } from 'vs/platform/extensions/common/extensions';
+import { InstantiationService } from 'vs/platform/instantiation/common/instantiationService';
+import { IExtensionPoint } from 'vs/platform/extensions/common/extensionsRegistry';
 
 class SimpleExtensionService implements IExtensionService {
 	_serviceBrand: any;
@@ -19,6 +20,9 @@ class SimpleExtensionService implements IExtensionService {
 	}
 	onReady(): TPromise<boolean> {
 		return TPromise.as(true);
+	}
+	readExtensionPointContributions<T>(extPoint:IExtensionPoint<T>): TPromise<ExtensionPointContribution<T>[]> {
+		return TPromise.as([]);
 	}
 	getExtensionsStatus() {
 		return undefined;

@@ -5,8 +5,9 @@
 
 'use strict';
 
-import { append, $, addClass, removeClass } from 'vs/base/browser/dom';
+import { append, $, addClass, removeClass, toggleClass } from 'vs/base/browser/dom';
 import { IDisposable, dispose } from 'vs/base/common/lifecycle';
+import { Action } from 'vs/base/common/actions';
 import { ActionBar } from 'vs/base/browser/ui/actionbar/actionbar';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
 import { IMessageService, Severity } from 'vs/platform/message/common/message';
@@ -14,10 +15,11 @@ import { IDelegate } from 'vs/base/browser/ui/list/list';
 import { IPagedRenderer } from 'vs/base/browser/ui/list/listPaging';
 import { once } from 'vs/base/common/event';
 import { domEvent } from 'vs/base/browser/event';
-import { IExtension } from './extensions';
-import { CombinedInstallAction, UpdateAction, EnableAction } from './extensionsActions';
+import { IExtension, ExtensionState } from '../common/extensions';
+import { InstallAction, UpdateAction, BuiltinStatusLabelAction, ReloadAction, ManageExtensionAction } from './extensionsActions';
 import { Label, RatingsWidget, InstallWidget } from './extensionsWidgets';
 import { EventType } from 'vs/base/common/events';
+import { IContextMenuService } from 'vs/platform/contextview/browser/contextView';
 
 export interface ITemplateData {
 	element: HTMLElement;
@@ -43,8 +45,9 @@ export class Renderer implements IPagedRenderer<IExtension, ITemplateData> {
 
 	constructor(
 		@IInstantiationService private instantiationService: IInstantiationService,
+		@IContextMenuService private contextMenuService: IContextMenuService,
 		@IMessageService private messageService: IMessageService
-	) {}
+	) { }
 
 	get templateId() { return 'extension'; }
 
@@ -52,7 +55,8 @@ export class Renderer implements IPagedRenderer<IExtension, ITemplateData> {
 		const element = append(root, $('.extension'));
 		const icon = append(element, $<HTMLImageElement>('img.icon'));
 		const details = append(element, $('.details'));
-		const header = append(details, $('.header'));
+		const headerContainer = append(details, $('.header-container'));
+		const header = append(headerContainer, $('.header'));
 		const name = append(header, $('span.name'));
 		const version = append(header, $('span.version'));
 		const installCount = append(header, $('span.install-count'));
@@ -60,20 +64,29 @@ export class Renderer implements IPagedRenderer<IExtension, ITemplateData> {
 		const description = append(details, $('.description.ellipsis'));
 		const footer = append(details, $('.footer'));
 		const author = append(footer, $('.author.ellipsis'));
-		const actionbar = new ActionBar(footer, { animated: false });
-
+		const actionbar = new ActionBar(footer, {
+			animated: false,
+			actionItemProvider: (action: Action) => {
+				if (action.id === ManageExtensionAction.ID) {
+					return (<ManageExtensionAction>action).actionItem;
+				}
+				return null;
+			}
+		});
 		actionbar.addListener2(EventType.RUN, ({ error }) => error && this.messageService.show(Severity.Error, error));
 
 		const versionWidget = this.instantiationService.createInstance(Label, version, e => e.version);
 		const installCountWidget = this.instantiationService.createInstance(InstallWidget, installCount, { small: true });
 		const ratingsWidget = this.instantiationService.createInstance(RatingsWidget, ratings, { small: true });
 
-		const installAction = this.instantiationService.createInstance(CombinedInstallAction);
+		const builtinStatusAction = this.instantiationService.createInstance(BuiltinStatusLabelAction);
+		const installAction = this.instantiationService.createInstance(InstallAction);
 		const updateAction = this.instantiationService.createInstance(UpdateAction);
-		const restartAction = this.instantiationService.createInstance(EnableAction);
+		const reloadAction = this.instantiationService.createInstance(ReloadAction);
+		const manageAction = this.instantiationService.createInstance(ManageExtensionAction);
 
-		actionbar.push([restartAction, updateAction, installAction], actionOptions);
-		const disposables = [versionWidget, installCountWidget, ratingsWidget, installAction, updateAction, restartAction, actionbar];
+		actionbar.push([reloadAction, updateAction, installAction, builtinStatusAction, manageAction], actionOptions);
+		const disposables = [versionWidget, installCountWidget, ratingsWidget, builtinStatusAction, updateAction, reloadAction, manageAction, actionbar];
 
 		return {
 			element, icon, name, installCount, ratings, author, description, disposables,
@@ -82,9 +95,11 @@ export class Renderer implements IPagedRenderer<IExtension, ITemplateData> {
 				versionWidget.extension = extension;
 				installCountWidget.extension = extension;
 				ratingsWidget.extension = extension;
+				builtinStatusAction.extension = extension;
 				installAction.extension = extension;
 				updateAction.extension = extension;
-				restartAction.extension = extension;
+				reloadAction.extension = extension;
+				manageAction.extension = extension;
 			}
 		};
 	}
@@ -106,6 +121,8 @@ export class Renderer implements IPagedRenderer<IExtension, ITemplateData> {
 		removeClass(data.element, 'loading');
 
 		data.extensionDisposables = dispose(data.extensionDisposables);
+
+		toggleClass(data.element, 'disabled', ExtensionState.Disabled === extension.state);
 
 		const onError = once(domEvent(data.icon, 'error'));
 		onError(() => data.icon.src = extension.iconUrlFallback, null, data.extensionDisposables);

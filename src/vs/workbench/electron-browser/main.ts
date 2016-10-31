@@ -5,28 +5,29 @@
 
 'use strict';
 
-import {TPromise} from 'vs/base/common/winjs.base';
-import {WorkbenchShell} from 'vs/workbench/electron-browser/shell';
-import {IOptions} from 'vs/workbench/common/options';
-import {domContentLoaded} from 'vs/base/browser/dom';
+import nls = require('vs/nls');
+import { TPromise } from 'vs/base/common/winjs.base';
+import { WorkbenchShell } from 'vs/workbench/electron-browser/shell';
+import { IOptions } from 'vs/workbench/common/options';
+import { domContentLoaded } from 'vs/base/browser/dom';
 import errors = require('vs/base/common/errors');
 import platform = require('vs/base/common/platform');
 import paths = require('vs/base/common/paths');
 import timer = require('vs/base/common/timer');
 import uri from 'vs/base/common/uri';
 import strings = require('vs/base/common/strings');
-import {IResourceInput} from 'vs/platform/editor/common/editor';
-import {EventService} from 'vs/platform/event/common/eventService';
-import {LegacyWorkspaceContextService} from 'vs/workbench/services/workspace/common/contextService';
-import {IWorkspace} from 'vs/platform/workspace/common/workspace';
-import {WorkspaceConfigurationService} from 'vs/workbench/services/configuration/node/configurationService';
-import {ParsedArgs} from 'vs/platform/environment/node/argv';
-import {realpath} from 'vs/base/node/pfs';
-import {EnvironmentService} from 'vs/platform/environment/node/environmentService';
+import { IResourceInput } from 'vs/platform/editor/common/editor';
+import { EventService } from 'vs/platform/event/common/eventService';
+import { WorkspaceContextService } from 'vs/platform/workspace/common/workspace';
+import { IWorkspace } from 'vs/platform/workspace/common/workspace';
+import { WorkspaceConfigurationService } from 'vs/workbench/services/configuration/node/configurationService';
+import { ParsedArgs } from 'vs/platform/environment/node/argv';
+import { realpath } from 'vs/base/node/pfs';
+import { EnvironmentService } from 'vs/platform/environment/node/environmentService';
 import path = require('path');
 import fs = require('fs');
 import gracefulFs = require('graceful-fs');
-import {IPath, IOpenFileRequest} from 'vs/workbench/electron-browser/common';
+import { IPath, IOpenFileRequest } from 'vs/workbench/electron-browser/common';
 
 gracefulFs.gracefulify(fs); // enable gracefulFs
 
@@ -39,8 +40,6 @@ export interface IWindowConfiguration extends ParsedArgs, IOpenFileRequest {
 	userEnv: any; /* vs/code/electron-main/env/IProcessEnvironment*/
 
 	workspacePath?: string;
-
-	extensionsToInstall?: string[];
 }
 
 export function startup(configuration: IWindowConfiguration): TPromise<void> {
@@ -52,8 +51,7 @@ export function startup(configuration: IWindowConfiguration): TPromise<void> {
 	const shellOptions: IOptions = {
 		filesToOpen,
 		filesToCreate,
-		filesToDiff,
-		extensionsToInstall: configuration.extensionsToInstall
+		filesToDiff
 	};
 
 	if (configuration.performance) {
@@ -121,7 +119,7 @@ function getWorkspace(workspacePath: string): TPromise<IWorkspace> {
 function openWorkbench(environment: IWindowConfiguration, workspace: IWorkspace, options: IOptions): TPromise<void> {
 	const eventService = new EventService();
 	const environmentService = new EnvironmentService(environment, environment.execPath);
-	const contextService = new LegacyWorkspaceContextService(workspace, options);
+	const contextService = new WorkspaceContextService(workspace);
 	const configurationService = new WorkspaceConfigurationService(contextService, eventService, environmentService);
 
 	// Since the configuration service is one of the core services that is used in so many places, we initialize it
@@ -143,17 +141,25 @@ function openWorkbench(environment: IWindowConfiguration, workspace: IWorkspace,
 			shell.open();
 
 			shell.joinCreation().then(() => {
-				timer.start(timer.Topic.STARTUP, 'Open Shell, Viewconst & Editor', beforeOpen, 'Workbench has opened after this event with viewconst and editor restored').stop();
+				timer.start(timer.Topic.STARTUP, 'Open Shell, Viewlet & Editor', beforeOpen, 'Workbench has opened after this event with viewlet and editor restored').stop();
 			});
 
 			// Inform user about loading issues from the loader
 			(<any>self).require.config({
 				onError: (err: any) => {
 					if (err.errorCode === 'load') {
-						shell.onUnexpectedError(errors.loaderError(err));
+						shell.onUnexpectedError(loaderError(err));
 					}
 				}
 			});
 		});
 	});
+}
+
+function loaderError(err: Error): Error {
+	if (platform.isWeb) {
+		return new Error(nls.localize('loaderError', "Failed to load a required file. Either you are no longer connected to the internet or the server you are connected to is offline. Please refresh the browser to try again."));
+	}
+
+	return new Error(nls.localize('loaderErrorNative', "Failed to load a required file. Please restart the application to try again. Details: {0}", JSON.stringify(err)));
 }

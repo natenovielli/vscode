@@ -6,12 +6,12 @@
 'use strict';
 
 import DOM = require('vs/base/browser/dom');
-import {defaultGenerator} from 'vs/base/common/idGenerator';
-import {escape} from 'vs/base/common/strings';
-import {TPromise} from 'vs/base/common/winjs.base';
-import {IHTMLContentElement, MarkedString} from 'vs/base/common/htmlContent';
-import {marked} from 'vs/base/common/marked/marked';
-import {IMouseEvent} from 'vs/base/browser/mouseEvent';
+import { defaultGenerator } from 'vs/base/common/idGenerator';
+import { escape } from 'vs/base/common/strings';
+import { TPromise } from 'vs/base/common/winjs.base';
+import { IHTMLContentElement, MarkedString } from 'vs/base/common/htmlContent';
+import { marked } from 'vs/base/common/marked/marked';
+import { IMouseEvent } from 'vs/base/browser/mouseEvent';
 
 export type RenderableContent = string | IHTMLContentElement | IHTMLContentElement[];
 
@@ -109,10 +109,10 @@ function _renderHtml(content: IHTMLContentElement, options: RenderOptions = {}):
 					// but update the node with the real result later.
 					const id = defaultGenerator.nextId();
 					TPromise.join([value, withInnerHTML]).done(values => {
-						let [value] = values;
+						let strValue = values[0] as string;
 						let span = element.querySelector(`span[data-code="${id}"]`);
 						if (span) {
-							span.innerHTML = value;
+							span.innerHTML = strValue;
 						}
 					}, err => {
 						// ignore
@@ -214,7 +214,7 @@ class StringStream {
 	}
 }
 
-enum FormatType {
+const enum FormatType {
 	Invalid,
 	Root,
 	Text,

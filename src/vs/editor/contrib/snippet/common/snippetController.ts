@@ -5,16 +5,17 @@
 
 'use strict';
 
-import {KeyCode, KeyMod} from 'vs/base/common/keyCodes';
+import { KeyCode, KeyMod } from 'vs/base/common/keyCodes';
 import * as strings from 'vs/base/common/strings';
-import {RawContextKey, IContextKey, IContextKeyService} from 'vs/platform/contextkey/common/contextkey';
-import {EditOperation} from 'vs/editor/common/core/editOperation';
-import {Range} from 'vs/editor/common/core/range';
-import {Selection} from 'vs/editor/common/core/selection';
+import { binarySearch } from 'vs/base/common/arrays';
+import { RawContextKey, IContextKey, IContextKeyService } from 'vs/platform/contextkey/common/contextkey';
+import { EditOperation } from 'vs/editor/common/core/editOperation';
+import { Range } from 'vs/editor/common/core/range';
+import { Selection } from 'vs/editor/common/core/selection';
 import * as editorCommon from 'vs/editor/common/editorCommon';
-import {CommonEditorRegistry, commonEditorContribution, EditorCommand} from 'vs/editor/common/editorCommonExtensions';
-import {IDisposable, dispose} from 'vs/base/common/lifecycle';
-import {ICodeSnippet, CodeSnippet} from './snippet';
+import { CommonEditorRegistry, commonEditorContribution, EditorCommand } from 'vs/editor/common/editorCommonExtensions';
+import { IDisposable, dispose } from 'vs/base/common/lifecycle';
+import { ICodeSnippet, CodeSnippet } from './snippet';
 
 import EditorContextKeys = editorCommon.EditorContextKeys;
 
@@ -57,14 +58,34 @@ export class InsertSnippetController {
 	}
 
 	private initialize(adaptedSnippet: ICodeSnippet, startLineNumber: number): void {
-		var i: number, len: number;
 
-		for (i = 0, len = adaptedSnippet.placeHolders.length; i < len; i++) {
-			var placeHolder = adaptedSnippet.placeHolders[i];
+		// sorted list of all placeholder occurences for subsequent lockups
+		const sortedOccurrences: editorCommon.IRange[] = [];
+		for (const {occurences} of adaptedSnippet.placeHolders) {
+			for (const range of occurences) {
+				sortedOccurrences.push(range);
+			}
+		}
+		sortedOccurrences.sort(Range.compareRangesUsingStarts);
 
-			var trackedRanges: string[] = [];
-			for (var j = 0, lenJ = placeHolder.occurences.length; j < lenJ; j++) {
-				trackedRanges.push(this.model.addTrackedRange(placeHolder.occurences[j], editorCommon.TrackedRangeStickiness.AlwaysGrowsWhenTypingAtEdges));
+		// track each occurence
+		for (const {occurences} of adaptedSnippet.placeHolders) {
+			const trackedRanges: string[] = [];
+
+			for (const range of occurences) {
+				let stickiness = editorCommon.TrackedRangeStickiness.AlwaysGrowsWhenTypingAtEdges;
+
+				// Check if the previous range ends exactly where this range starts
+				// and iff so change the stickiness to avoid conflicts
+				let idx = binarySearch(sortedOccurrences, range, Range.compareRangesUsingStarts);
+				if (idx > 0
+					&& sortedOccurrences[idx - 1].endLineNumber === range.startLineNumber
+					&& sortedOccurrences[idx - 1].endColumn === range.startColumn) {
+
+					stickiness = editorCommon.TrackedRangeStickiness.GrowsOnlyWhenTypingAfter;
+				}
+
+				trackedRanges.push(this.model.addTrackedRange(range, stickiness));
 			}
 
 			this.trackedPlaceHolders.push({
@@ -473,8 +494,10 @@ export class SnippetController {
 			this._inSnippetMode.set(true);
 			this._currentController = new InsertSnippetController(this._editor, prepared.adaptedSnippet, prepared.typeRange.startLineNumber, initialAlternativeVersionId, () => {
 				this._inSnippetMode.reset();
-				this._currentController.dispose();
-				this._currentController = null;
+				if (this._currentController) {
+					this._currentController.dispose();
+					this._currentController = null;
+				}
 			});
 		}
 	}
@@ -483,41 +506,77 @@ export class SnippetController {
 
 		const edits: editorCommon.IIdentifiedSingleEditOperation[] = [];
 		const selections = this._editor.getSelections();
-		let lineDelta = 0;
-		let columnDelta = 0;
+		const model = this._editor.getModel();
 
-		for (let i = 0; i < selections.length; i++) {
-			let {adaptedSnippet, typeRange} = SnippetController._prepareSnippet(this._editor, selections[i], snippet, overwriteBefore, overwriteAfter, stripPrefix);
+		let totalDelta = 0;
+		const newSelections: { offset: number; i: number }[] = [];
+
+		// sort selections by start position but remember where
+		// each selection came from
+		const selectionEntries = selections
+			.map((selection, i) => ({ selection, i }))
+			.sort((a, b) => Range.compareRangesUsingStarts(a.selection, b.selection));
+
+		for (const {selection, i} of selectionEntries) {
+
+			let {adaptedSnippet, typeRange} = SnippetController._prepareSnippet(this._editor, selection, snippet, overwriteBefore, overwriteAfter, stripPrefix);
+
 			SnippetController._addCommandForSnippet(this._editor.getModel(), adaptedSnippet, typeRange, edits);
 
-			if (i === 0 && snippet.isSingleTabstopOnly) {
-				const finalCursorPos = SnippetController._getSnippetCursorOnly(adaptedSnippet);
-				const editEnd = typeRange.getEndPosition();
-				editEnd.lineNumber += adaptedSnippet.lines.length - 1;
-				editEnd.column = adaptedSnippet.lines[adaptedSnippet.lines.length - 1].length + 1;
+			// compute new selection offset
+			// * get current offset
+			// * get length of snippet that we insert
+			// * get final cursor position of snippet that we insert (might not exist)
+			// * NEW selection offset is current + final cursor pos + inserts_until_here
 
-				lineDelta = finalCursorPos.lineNumber - editEnd.lineNumber;
-				columnDelta = finalCursorPos.column - editEnd.column;
+			let offset = model.getOffsetAt(typeRange.getStartPosition());
+
+			// inserts until here
+			offset += totalDelta;
+
+			// each snippet has a different length (because of whitespace changes)
+			let snippetLength = (adaptedSnippet.lines.length - 1) * model.getEOL().length;
+			for (const line of adaptedSnippet.lines) {
+				snippetLength += line.length;
 			}
+
+			// each snippet has a different cursor offset
+			const finalCursorPos = SnippetController._getSnippetCursorOnly(adaptedSnippet);
+			if (finalCursorPos) {
+				let finalCursorOffset: number;
+				if (finalCursorPos.lineNumber === typeRange.startLineNumber) {
+					finalCursorOffset = finalCursorPos.column - typeRange.startColumn;
+				} else {
+					finalCursorOffset = finalCursorPos.column - 1;
+					for (let i = 0, lineNumber = typeRange.startLineNumber; lineNumber < finalCursorPos.lineNumber; i++ , lineNumber++) {
+						finalCursorOffset += adaptedSnippet.lines[i].length + model.getEOL().length;
+					}
+				}
+				offset += finalCursorOffset;
+
+			} else {
+				offset += snippetLength;
+			}
+
+			newSelections.push({ offset, i });
+			totalDelta += (snippetLength - model.getValueLengthInRange(typeRange));
 		}
 
 		if (edits.length === 0) {
 			return;
 		}
 
-		const cursorStateComputer: editorCommon.ICursorStateComputer = function (inverseEdits) {
-
-			return inverseEdits.map((edit, i) => {
-
-				let {endLineNumber, endColumn} = edit.range;
-				endLineNumber += lineDelta;
-				endColumn += columnDelta;
-
-				return new Selection(endLineNumber, endColumn, endLineNumber, endColumn);
-			});
+		const cursorStateComputer: editorCommon.ICursorStateComputer = function () {
+			// create new selections from the new selection offsets
+			// and restore the order we had at the beginning
+			const result: Selection[] = [];
+			for (const {offset, i} of newSelections) {
+				const pos = model.getPositionAt(offset);
+				result[i] = new Selection(pos.lineNumber, pos.column, pos.lineNumber, pos.column);
+			}
+			return result;
 		};
 
-		const model = this._editor.getModel();
 		model.pushStackElement();
 		this._editor.setSelections(model.pushEditOperations(selections, edits, cursorStateComputer));
 		model.pushStackElement();

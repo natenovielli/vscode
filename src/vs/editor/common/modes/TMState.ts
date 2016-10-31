@@ -4,28 +4,28 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import {IMode, IState, ITokenizationResult} from 'vs/editor/common/modes';
-import {AbstractState} from 'vs/editor/common/modes/abstractState';
-import {StackElement} from 'vscode-textmate';
+import { IState } from 'vs/editor/common/modes';
+import { AbstractState } from 'vs/editor/common/modes/abstractState';
+import { StackElement } from 'vscode-textmate';
 
 export class TMState implements IState {
 
-	private _mode: IMode;
+	private _modeId: string;
 	private _parentEmbedderState: IState;
 	private _ruleStack: StackElement;
 
-	constructor(mode: IMode, parentEmbedderState: IState, ruleStack: StackElement) {
-		this._mode = mode;
+	constructor(modeId: string, parentEmbedderState: IState, ruleStack: StackElement) {
+		this._modeId = modeId;
 		this._parentEmbedderState = parentEmbedderState;
 		this._ruleStack = ruleStack;
 	}
 
-	public clone():TMState {
+	public clone(): TMState {
 		let parentEmbedderStateClone = AbstractState.safeClone(this._parentEmbedderState);
-		return new TMState(this._mode, parentEmbedderStateClone, this._ruleStack);
+		return new TMState(this._modeId, parentEmbedderStateClone, this._ruleStack);
 	}
 
-	public equals(other:IState):boolean {
+	public equals(other: IState): boolean {
 		if (!other || !(other instanceof TMState)) {
 			return false;
 		}
@@ -46,19 +46,15 @@ export class TMState implements IState {
 		return this._ruleStack.equals(otherState._ruleStack);
 	}
 
-	public getMode():IMode {
-		return this._mode;
+	public getModeId(): string {
+		return this._modeId;
 	}
 
-	public tokenize(stream:any):ITokenizationResult {
-		throw new Error();
-	}
-
-	public getStateData():IState {
+	public getStateData(): IState {
 		return this._parentEmbedderState;
 	}
 
-	public setStateData(state:IState):void {
+	public setStateData(state: IState): void {
 		this._parentEmbedderState = state;
 	}
 
@@ -66,7 +62,7 @@ export class TMState implements IState {
 		return this._ruleStack;
 	}
 
-	public setRuleStack(ruleStack:StackElement): void {
+	public setRuleStack(ruleStack: StackElement): void {
 		this._ruleStack = ruleStack;
 	}
 }

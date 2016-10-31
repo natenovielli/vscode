@@ -5,21 +5,22 @@
 
 import lifecycle = require('vs/base/common/lifecycle');
 import errors = require('vs/base/common/errors');
+import * as strings from 'vs/base/common/strings';
 import severity from 'vs/base/common/severity';
 import builder = require('vs/base/browser/builder');
 import dom = require('vs/base/browser/dom');
-import {StandardMouseEvent} from 'vs/base/browser/mouseEvent';
+import { StandardMouseEvent } from 'vs/base/browser/mouseEvent';
 import actions = require('vs/base/common/actions');
 import events = require('vs/base/common/events');
 import actionbar = require('vs/base/browser/ui/actionbar/actionbar');
-import {IPartService} from 'vs/workbench/services/part/common/partService';
+import { IPartService } from 'vs/workbench/services/part/common/partService';
 import wbext = require('vs/workbench/common/contributions');
 import debug = require('vs/workbench/parts/debug/common/debug');
-import {PauseAction, ContinueAction, StepBackAction, StopAction, DisconnectAction, StepOverAction, StepIntoAction, StepOutAction, RestartAction} from 'vs/workbench/parts/debug/browser/debugActions';
-import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
-import {IStorageService, StorageScope} from 'vs/platform/storage/common/storage';
-import {IMessageService} from 'vs/platform/message/common/message';
-import {ITelemetryService} from 'vs/platform/telemetry/common/telemetry';
+import { PauseAction, ContinueAction, StepBackAction, StopAction, DisconnectAction, StepOverAction, StepIntoAction, StepOutAction, RestartAction } from 'vs/workbench/parts/debug/browser/debugActions';
+import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
+import { IStorageService, StorageScope } from 'vs/platform/storage/common/storage';
+import { IMessageService } from 'vs/platform/message/common/message';
+import { ITelemetryService } from 'vs/platform/telemetry/common/telemetry';
 
 import IDebugService = debug.IDebugService;
 
@@ -70,8 +71,8 @@ export class DebugActionsWidget implements wbext.IWorkbenchContribution {
 	}
 
 	private registerListeners(): void {
-		this.toDispose.push(this.debugService.onDidChangeState(state => {
-			this.onDebugStateChange(state);
+		this.toDispose.push(this.debugService.onDidChangeState(() => {
+			this.onDebugStateChange();
 		}));
 		this.toDispose.push(this.actionBar.actionRunner.addListener2(events.EventType.RUN, (e: any) => {
 			// check for error
@@ -131,7 +132,8 @@ export class DebugActionsWidget implements wbext.IWorkbenchContribution {
 		return DebugActionsWidget.ID;
 	}
 
-	private onDebugStateChange(state: debug.State): void {
+	private onDebugStateChange(): void {
+		const state = this.debugService.state;
 		if (state === debug.State.Disabled || state === debug.State.Inactive) {
 			return this.hide();
 		}
@@ -183,11 +185,10 @@ export class DebugActionsWidget implements wbext.IWorkbenchContribution {
 		}
 
 		this.actions[0] = state === debug.State.Running ? this.pauseAction : this.continueAction;
-		const session = this.debugService.getActiveSession();
-		const configuration = this.debugService.getConfigurationManager().configuration;
-		this.actions[5] = configuration && configuration.request === 'attach' ? this.disconnectAction : this.stopAction;
+		const process = this.debugService.getViewModel().focusedProcess;
+		this.actions[5] = (process && !strings.equalsIgnoreCase(process.session.configuration.type, 'extensionHost') && process.session.requestType === debug.SessionRequestType.ATTACH) ? this.disconnectAction : this.stopAction;
 
-		if (session && session.configuration.capabilities.supportsStepBack) {
+		if (process && process.session.configuration.capabilities.supportsStepBack) {
 			if (!this.stepBackAction) {
 				this.stepBackAction = instantiationService.createInstance(StepBackAction, StepBackAction.ID, StepBackAction.LABEL);
 				this.toDispose.push(this.stepBackAction);

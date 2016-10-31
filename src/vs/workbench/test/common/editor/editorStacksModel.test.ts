@@ -6,19 +6,20 @@
 'use strict';
 
 import * as assert from 'assert';
-import {EditorStacksModel, EditorGroup, GroupEvent} from 'vs/workbench/common/editor/editorStacksModel';
-import {EditorInput, IFileEditorInput, IEditorIdentifier, IEditorGroup, IStacksModelChangeEvent, IEditorRegistry, Extensions as EditorExtensions, IEditorInputFactory} from 'vs/workbench/common/editor';
+import { EditorStacksModel, EditorGroup, GroupEvent } from 'vs/workbench/common/editor/editorStacksModel';
+import { EditorInput, IFileEditorInput, IEditorIdentifier, IEditorGroup, IStacksModelChangeEvent, IEditorRegistry, Extensions as EditorExtensions, IEditorInputFactory } from 'vs/workbench/common/editor';
 import URI from 'vs/base/common/uri';
-import {TestStorageService, TestConfigurationService, TestLifecycleService, TestContextService} from 'vs/test/utils/servicesTestUtils';
-import {TestInstantiationService} from 'vs/test/utils/instantiationTestUtils';
-import {IConfigurationService} from 'vs/platform/configuration/common/configuration';
-import {IStorageService} from 'vs/platform/storage/common/storage';
-import {ILifecycleService} from 'vs/platform/lifecycle/common/lifecycle';
-import {IWorkspaceContextService} from 'vs/platform/workspace/common/workspace';
-import {Registry} from 'vs/platform/platform';
-import {Position, Direction} from 'vs/platform/editor/common/editor';
-import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
-import {DiffEditorInput} from 'vs/workbench/common/editor/diffEditorInput';
+import { TestStorageService, TestLifecycleService, TestContextService } from 'vs/test/utils/servicesTestUtils';
+import { TestConfigurationService } from 'vs/platform/configuration/test/common/testConfigurationService';
+import { TestInstantiationService } from 'vs/test/utils/instantiationTestUtils';
+import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
+import { IStorageService } from 'vs/platform/storage/common/storage';
+import { ILifecycleService } from 'vs/platform/lifecycle/common/lifecycle';
+import { IWorkspaceContextService } from 'vs/platform/workspace/common/workspace';
+import { Registry } from 'vs/platform/platform';
+import { Position, Direction } from 'vs/platform/editor/common/editor';
+import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
+import { DiffEditorInput } from 'vs/workbench/common/editor/diffEditorInput';
 import 'vs/workbench/browser/parts/editor/baseEditor';
 
 function create(): EditorStacksModel {
@@ -111,6 +112,10 @@ class TestEditorInput extends EditorInput {
 	public setDirty(): void {
 		this._onDidChangeDirty.fire();
 	}
+
+	public setLabel(): void {
+		this._onDidChangeLabel.fire();
+	}
 }
 
 class NonSerializableTestEditorInput extends EditorInput {
@@ -140,9 +145,6 @@ class TestFileEditorInput extends EditorInput implements IFileEditorInput {
 	public setResource(r: URI): void {
 	}
 
-	public setMime(mime: string) {
-	}
-
 	public setEncoding(encoding: string) {
 	}
 
@@ -155,10 +157,6 @@ class TestFileEditorInput extends EditorInput implements IFileEditorInput {
 
 	public getResource(): URI {
 		return this.resource;
-	}
-
-	public getMime(): string {
-		return null;
 	}
 }
 
@@ -299,9 +297,9 @@ suite('Editor Stacks Model', () => {
 		const group2 = model.openGroup('second');
 		const group3 = model.openGroup('third');
 
-		assert.equal(Position.LEFT, model.positionOfGroup(group1));
-		assert.equal(Position.CENTER, model.positionOfGroup(group2));
-		assert.equal(Position.RIGHT, model.positionOfGroup(group3));
+		assert.equal(Position.ONE, model.positionOfGroup(group1));
+		assert.equal(Position.TWO, model.positionOfGroup(group2));
+		assert.equal(Position.THREE, model.positionOfGroup(group3));
 	});
 
 	test('Groups - Rename Group', function () {
@@ -1181,7 +1179,6 @@ suite('Editor Stacks Model', () => {
 		config.setUserConfiguration('workbench', { editor: { openPositioning: 'right' } });
 		inst.stub(IConfigurationService, config);
 
-
 		(<IEditorRegistry>Registry.as(EditorExtensions.Editors)).setInstantiationService(inst);
 
 		let model: EditorStacksModel = inst.createInstance(EditorStacksModel, true);
@@ -1484,13 +1481,16 @@ suite('Editor Stacks Model', () => {
 		assert.ok(model.isOpen(input1Resource));
 		assert.ok(group1.contains(input1Resource));
 		assert.equal(model.count(input1Resource), 1);
+		assert.equal(group1.getEditor(input1Resource), input1);
 
 		group2.openEditor(input1);
 		group1.closeEditor(input1);
 
 		assert.ok(model.isOpen(input1Resource));
 		assert.ok(!group1.contains(input1Resource));
+		assert.ok(!group1.getEditor(input1Resource));
 		assert.ok(group2.contains(input1Resource));
+		assert.equal(group2.getEditor(input1Resource), input1);
 		assert.equal(model.count(input1Resource), 1);
 
 		const input1ResourceClone = URI.file('/hello/world.txt');
@@ -1503,6 +1503,7 @@ suite('Editor Stacks Model', () => {
 
 		assert.ok(model.isOpen(input1Resource));
 		assert.ok(group1.contains(input1Resource));
+		assert.equal(group1.getEditor(input1Resource), input1Clone);
 		assert.ok(!group2.contains(input1Resource));
 
 		group1.closeEditor(input1Clone);
@@ -1638,7 +1639,7 @@ suite('Editor Stacks Model', () => {
 		assert.equal(input1.isDisposed(), false);
 	});
 
-	test('Stack - Multiple Editors - Editor Emits Dirty', function () {
+	test('Stack - Multiple Editors - Editor Emits Dirty and Label Changed', function () {
 		const model = create();
 
 		const group1 = model.openGroup('group1');
@@ -1655,25 +1656,38 @@ suite('Editor Stacks Model', () => {
 			dirtyCounter++;
 		});
 
+		let labelChangeCounter = 0;
+		model.onEditorLabelChange(() => {
+			labelChangeCounter++;
+		});
+
 		(<TestEditorInput>input1).setDirty();
+		(<TestEditorInput>input1).setLabel();
 
 		assert.equal(dirtyCounter, 1);
+		assert.equal(labelChangeCounter, 1);
 
 		(<TestEditorInput>input2).setDirty();
+		(<TestEditorInput>input2).setLabel();
 
 		assert.equal(dirtyCounter, 2);
+		assert.equal(labelChangeCounter, 2);
 
 		group2.closeAllEditors();
 
 		(<TestEditorInput>input2).setDirty();
+		(<TestEditorInput>input2).setLabel();
 
 		assert.equal(dirtyCounter, 2);
+		assert.equal(labelChangeCounter, 2);
 
 		model.closeGroups();
 
 		(<TestEditorInput>input1).setDirty();
+		(<TestEditorInput>input1).setLabel();
 
 		assert.equal(dirtyCounter, 2);
+		assert.equal(labelChangeCounter, 2);
 	});
 
 	test('Groups - Model change events (structural vs state)', function () {

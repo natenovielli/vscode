@@ -4,9 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import {TPromise} from 'vs/base/common/winjs.base';
+import { TPromise } from 'vs/base/common/winjs.base';
 import Event from 'vs/base/common/event';
-import {createDecorator} from 'vs/platform/instantiation/common/instantiation';
+import { createDecorator } from 'vs/platform/instantiation/common/instantiation';
 
 export const ILifecycleService = createDecorator<ILifecycleService>('lifecycleService');
 
@@ -33,6 +33,12 @@ export interface ILifecycleService {
 	_serviceBrand: any;
 
 	/**
+	 * A flag indicating if the application is in the process of shutting down. This will be true
+	 * before the onWillShutdown event is fired and false if the shutdown is being vetoed.
+	 */
+	willShutdown: boolean;
+
+	/**
 	 * Fired before shutdown happens. Allows listeners to veto against the
 	 * shutdown.
 	 */
@@ -47,6 +53,7 @@ export interface ILifecycleService {
 
 export const NullLifecycleService: ILifecycleService = {
 	_serviceBrand: null,
+	willShutdown: false,
 	onWillShutdown: () => ({ dispose() { } }),
 	onShutdown: () => ({ dispose() { } })
 };

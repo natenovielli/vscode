@@ -113,6 +113,7 @@ export class SuggestController implements IEditorContribution {
 
 	triggerSuggest(): void {
 		this.model.trigger(false, false);
+		this.editor.revealLine(this.editor.getPosition().lineNumber);
 		this.editor.focus();
 	}
 
@@ -177,7 +178,7 @@ export class TriggerSuggestAction extends EditorAction {
 		});
 	}
 
-	public run(accessor:ServicesAccessor, editor:ICommonCodeEditor): void {
+	public run(accessor: ServicesAccessor, editor: ICommonCodeEditor): void {
 		SuggestController.get(editor).triggerSuggest();
 	}
 }

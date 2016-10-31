@@ -5,25 +5,26 @@
 
 'use strict';
 
-import {TPromise} from 'vs/base/common/winjs.base';
+import { TPromise } from 'vs/base/common/winjs.base';
 import uri from 'vs/base/common/uri';
 import paths = require('vs/base/common/paths');
 import extfs = require('vs/base/node/extfs');
 import objects = require('vs/base/common/objects');
-import {RunOnceScheduler} from 'vs/base/common/async';
+import { RunOnceScheduler } from 'vs/base/common/async';
 import collections = require('vs/base/common/collections');
-import {IWorkspaceContextService} from 'vs/platform/workspace/common/workspace';
-import {IEnvironmentService} from 'vs/platform/environment/common/environment';
-import {IEventService} from 'vs/platform/event/common/event';
-import {IDisposable, dispose} from 'vs/base/common/lifecycle';
-import {readFile} from 'vs/base/node/pfs';
+import { IWorkspaceContextService } from 'vs/platform/workspace/common/workspace';
+import { IEnvironmentService } from 'vs/platform/environment/common/environment';
+import { IEventService } from 'vs/platform/event/common/event';
+import { IDisposable, dispose } from 'vs/base/common/lifecycle';
+import { readFile } from 'vs/base/node/pfs';
 import errors = require('vs/base/common/errors');
-import {IConfigFile, consolidate, newConfigFile} from 'vs/workbench/services/configuration/common/model';
-import {IConfigurationServiceEvent, getConfigurationValue}  from 'vs/platform/configuration/common/configuration';
-import {ConfigurationService as BaseConfigurationService}  from 'vs/platform/configuration/node/configurationService';
-import {IWorkspaceConfigurationService, IWorkspaceConfigurationValue, CONFIG_DEFAULT_NAME, WORKSPACE_CONFIG_FOLDER_DEFAULT_NAME} from 'vs/workbench/services/configuration/common/configuration';
-import {EventType as FileEventType, FileChangeType, FileChangesEvent} from 'vs/platform/files/common/files';
-import Event, {Emitter} from 'vs/base/common/event';
+import { IConfigFile, consolidate, newConfigFile } from 'vs/workbench/services/configuration/common/model';
+import { IConfigurationServiceEvent, getConfigurationValue } from 'vs/platform/configuration/common/configuration';
+import { ConfigurationService as BaseConfigurationService } from 'vs/platform/configuration/node/configurationService';
+import { IWorkspaceConfigurationService, IWorkspaceConfigurationValue, CONFIG_DEFAULT_NAME, WORKSPACE_CONFIG_FOLDER_DEFAULT_NAME } from 'vs/workbench/services/configuration/common/configuration';
+import { EventType as FileEventType, FileChangeType, FileChangesEvent } from 'vs/platform/files/common/files';
+import { ITelemetryService } from 'vs/platform/telemetry/common/telemetry';
+import Event, { Emitter } from 'vs/base/common/event';
 
 interface IStat {
 	resource: uri;
@@ -59,7 +60,7 @@ export class WorkspaceConfigurationService implements IWorkspaceConfigurationSer
 	constructor(
 		@IWorkspaceContextService private contextService: IWorkspaceContextService,
 		@IEventService private eventService: IEventService,
-		@IEnvironmentService private environmentService: IEnvironmentService,
+		@IEnvironmentService environmentService: IEnvironmentService,
 		private workspaceSettingsRootFolder: string = WORKSPACE_CONFIG_FOLDER_DEFAULT_NAME
 	) {
 		this.toDispose = [];
@@ -211,7 +212,10 @@ export class WorkspaceConfigurationService implements IWorkspaceConfigurationSer
 			}
 
 			// outside my folder or not a *.json file
-			if (paths.extname(workspacePath) !== '.json' || !paths.isEqualOrParent(workspacePath, this.workspaceSettingsRootFolder)) {
+			if (
+				paths.extname(workspacePath) !== '.json' ||							// we only care about *.json files
+				paths.dirname(workspacePath) !== this.workspaceSettingsRootFolder	// which are top level in .vscode
+			) {
 				continue;
 			}
 
@@ -232,6 +236,10 @@ export class WorkspaceConfigurationService implements IWorkspaceConfigurationSer
 		if (affectedByChanges && !this.reloadConfigurationScheduler.isScheduled()) {
 			this.reloadConfigurationScheduler.schedule();
 		}
+	}
+
+	public set telemetryService(value: ITelemetryService) {
+		this.baseConfigurationService.telemetryService = value;
 	}
 }
 
