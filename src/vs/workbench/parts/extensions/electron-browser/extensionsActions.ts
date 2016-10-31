@@ -744,20 +744,15 @@ export class UpdateAllAction extends Action {
 	}
 
 	private get outdated(): IExtension[] {
-		return this.extensionsWorkbenchService.local.filter(
-			e => this.extensionsWorkbenchService.canInstall(e)
-				&& e.type === LocalExtensionType.User
-				&& (e.state === ExtensionState.Enabled || e.state === ExtensionState.Disabled || e.state === ExtensionState.Installed)
-				&& e.outdated
-		);
+		return this.extensionsWorkbenchService.local.filter(e => e.outdated && e.state !== ExtensionState.Installing);
 	}
 
 	private update(): void {
 		this.enabled = this.outdated.length > 0;
 	}
 
-	run(promptToInstallDependencies: boolean = true, ): TPromise<any> {
-		return TPromise.join(this.outdated.map(e => this.extensionsWorkbenchService.install(e, promptToInstallDependencies)));
+	run(): TPromise<any> {
+		return TPromise.join(this.outdated.map(e => this.extensionsWorkbenchService.install(e)));
 	}
 
 	dispose(): void {
@@ -1100,7 +1095,9 @@ export class InstallVSIXAction extends Action {
 	constructor(
 		id = InstallVSIXAction.ID,
 		label = InstallVSIXAction.LABEL,
-		@IExtensionsWorkbenchService private extensionsWorkbenchService: IExtensionsWorkbenchService
+		@IExtensionsWorkbenchService private extensionsWorkbenchService: IExtensionsWorkbenchService,
+		@IMessageService private messageService: IMessageService,
+		@IInstantiationService private instantiationService: IInstantiationService
 	) {
 		super(id, label, 'extension-action install-vsix', true);
 	}
@@ -1115,7 +1112,15 @@ export class InstallVSIXAction extends Action {
 			return TPromise.as(null);
 		}
 
-		return TPromise.join(result.map(vsix => this.extensionsWorkbenchService.install(vsix)));
+		return TPromise.join(result.map(vsix => this.extensionsWorkbenchService.install(vsix))).then(() => {
+			this.messageService.show(
+				severity.Info,
+				{
+					message: localize('InstallVSIXAction.success', "Successfully installed the extension. Restart to enable it."),
+					actions: [this.instantiationService.createInstance(ReloadWindowAction, ReloadWindowAction.ID, localize('InstallVSIXAction.reloadNow', "Reload Now"))]
+				}
+			);
+		});
 	}
 }
 
@@ -1147,7 +1152,7 @@ export class BuiltinStatusLabelAction extends Action {
 export class DisableAllAction extends Action {
 
 	static ID = 'workbench.extensions.action.disableAll';
-	static LABEL = localize('disableAll', "Disable All");
+	static LABEL = localize('disableAll', "Disable All Installed Extensions");
 
 	private disposables: IDisposable[] = [];
 
@@ -1178,7 +1183,7 @@ export class DisableAllAction extends Action {
 export class DisableAllWorkpsaceAction extends Action {
 
 	static ID = 'workbench.extensions.action.disableAllWorkspace';
-	static LABEL = localize('disableAllWorkspace', "Disable All (Workspace)");
+	static LABEL = localize('disableAllWorkspace', "Disable All Installed Extensions for this Workspace");
 
 	private disposables: IDisposable[] = [];
 
@@ -1210,7 +1215,7 @@ export class DisableAllWorkpsaceAction extends Action {
 export class EnableAllAction extends Action {
 
 	static ID = 'workbench.extensions.action.enableAll';
-	static LABEL = localize('enableAll', "Enable All");
+	static LABEL = localize('enableAll', "Enable All Installed Extensions");
 
 	private disposables: IDisposable[] = [];
 
@@ -1241,7 +1246,7 @@ export class EnableAllAction extends Action {
 export class EnableAllWorkpsaceAction extends Action {
 
 	static ID = 'workbench.extensions.action.enableAllWorkspace';
-	static LABEL = localize('enableAllWorkspace', "Enable All (Workspace)");
+	static LABEL = localize('enableAllWorkspace', "Enable All Installed Extensions for this Workspace");
 
 	private disposables: IDisposable[] = [];
 
