@@ -5,7 +5,8 @@
 'use strict';
 
 import { createConnection, IConnection, TextDocuments, InitializeParams, InitializeResult, RequestType } from 'vscode-languageserver';
-import { DocumentContext, TextDocument, Diagnostic, DocumentLink, Range } from 'vscode-html-languageservice';
+import { DocumentContext } from 'vscode-html-languageservice';
+import { TextDocument, Diagnostic, DocumentLink, Range, TextEdit, SymbolInformation } from 'vscode-languageserver-types';
 import { getLanguageModes, LanguageModes } from './modes/languageModes';
 
 import * as url from 'url';
@@ -16,7 +17,7 @@ import * as nls from 'vscode-nls';
 nls.config(process.env['VSCODE_NLS_CONFIG']);
 
 namespace ColorSymbolRequest {
-	export const type: RequestType<string, Range[], any> = { get method() { return 'css/colorSymbols'; } };
+	export const type: RequestType<string, Range[], any, any> = { get method() { return 'css/colorSymbols'; }, _: null };
 }
 
 // Create a connection for the server
@@ -44,10 +45,10 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
 
 	languageModes = getLanguageModes(initializationOptions ? initializationOptions.embeddedLanguages : { css: true, javascript: true });
 	documents.onDidClose(e => {
-		languageModes.getAllModes().forEach(m => m.onDocumentRemoved(e.document));
+		languageModes.onDocumentRemoved(e.document);
 	});
 	connection.onShutdown(() => {
-		languageModes.getAllModes().forEach(m => m.dispose());
+		languageModes.dispose();
 	});
 
 	return {
@@ -59,6 +60,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
 			documentHighlightProvider: true,
 			documentRangeFormattingProvider: initializationOptions && initializationOptions['format.enable'],
 			documentLinkProvider: true,
+			documentSymbolProvider: true,
 			definitionProvider: true,
 			signatureHelpProvider: { triggerCharacters: ['('] },
 			referencesProvider: true
@@ -112,10 +114,18 @@ function validateTextDocument(textDocument: TextDocument): void {
 	let diagnostics: Diagnostic[] = [];
 	languageModes.getAllModesInDocument(textDocument).forEach(mode => {
 		if (mode.doValidation) {
-			diagnostics = diagnostics.concat(mode.doValidation(textDocument));
+			pushAll(diagnostics, mode.doValidation(textDocument));
 		}
 	});
 	connection.sendDiagnostics({ uri: textDocument.uri, diagnostics });
+}
+
+function pushAll<T>(to: T[], from: T[]) {
+	if (from) {
+		for (var i = 0; i < from.length; i++) {
+			to.push(from[i]);
+		}
+	}
 }
 
 connection.onCompletion(textDocumentPosition => {
@@ -186,12 +196,16 @@ connection.onSignatureHelp(signatureHelpParms => {
 
 connection.onDocumentRangeFormatting(formatParams => {
 	let document = documents.get(formatParams.textDocument.uri);
-	let startMode = languageModes.getModeAtPosition(document, formatParams.range.start);
-	let endMode = languageModes.getModeAtPosition(document, formatParams.range.end);
-	if (startMode && startMode === endMode && startMode.format) {
-		return startMode.format(document, formatParams.range, formatParams.options);
-	}
-	return null;
+	let ranges = languageModes.getModesInRange(document, formatParams.range);
+	let result: TextEdit[] = [];
+	ranges.forEach(r => {
+		let mode = r.mode;
+		if (mode && mode.format && !r.attributeValue) {
+			let edits = mode.format(document, r, formatParams.options);
+			pushAll(result, edits);
+		}
+	});
+	return result;
 });
 
 connection.onDocumentLinks(documentLinkParam => {
@@ -207,10 +221,21 @@ connection.onDocumentLinks(documentLinkParam => {
 	let links: DocumentLink[] = [];
 	languageModes.getAllModesInDocument(document).forEach(m => {
 		if (m.findDocumentLinks) {
-			links = links.concat(m.findDocumentLinks(document, documentContext));
+			pushAll(links, m.findDocumentLinks(document, documentContext));
 		}
 	});
 	return links;
+});
+
+connection.onDocumentSymbol(documentSymbolParms => {
+	let document = documents.get(documentSymbolParms.textDocument.uri);
+	let symbols: SymbolInformation[] = [];
+	languageModes.getAllModesInDocument(document).forEach(m => {
+		if (m.findDocumentSymbols) {
+			pushAll(symbols, m.findDocumentSymbols(document));
+		}
+	});
+	return symbols;
 });
 
 connection.onRequest(ColorSymbolRequest.type, uri => {
@@ -219,7 +244,7 @@ connection.onRequest(ColorSymbolRequest.type, uri => {
 	if (document) {
 		languageModes.getAllModesInDocument(document).forEach(m => {
 			if (m.findColorSymbols) {
-				ranges = ranges.concat(m.findColorSymbols(document));
+				pushAll(ranges, m.findColorSymbols(document));
 			}
 		});
 	}

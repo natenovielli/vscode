@@ -17,8 +17,7 @@ import { IConfigurationService } from 'vs/platform/configuration/common/configur
 import { parseArgs } from 'vs/platform/environment/node/argv';
 import product from 'vs/platform/product';
 import { getCommonHTTPHeaders } from 'vs/platform/environment/node/http';
-import { IBackupMainService } from 'vs/platform/backup/common/backup';
-import Uri from 'vs/base/common/uri';
+import { IWindowSettings } from 'vs/platform/windows/common/windows';
 
 export interface IWindowState {
 	width?: number;
@@ -49,29 +48,6 @@ export const defaultWindowState = function (mode = WindowMode.Normal): IWindowSt
 		mode: mode
 	};
 };
-
-export enum ReadyState {
-
-	/**
-	 * This window has not loaded any HTML yet
-	 */
-	NONE,
-
-	/**
-	 * This window is loading HTML
-	 */
-	LOADING,
-
-	/**
-	 * This window is navigating to another HTML
-	 */
-	NAVIGATING,
-
-	/**
-	 * This window is done loading HTML
-	 */
-	READY
-}
 
 export interface IPath {
 
@@ -112,19 +88,40 @@ export interface IWindowConfiguration extends ParsedArgs {
 	filesToOpen?: IPath[];
 	filesToCreate?: IPath[];
 	filesToDiff?: IPath[];
-	untitledToRestore?: IPath[];
 }
 
-export interface IWindowSettings {
-	openFilesInNewWindow: boolean;
-	reopenFolders: 'all' | 'one' | 'none';
-	restoreFullscreen: boolean;
-	fullScreenZenMode: boolean;
-	zoomLevel: number;
-	titleBarStyle: 'native' | 'custom';
+export enum ReadyState {
+
+	/**
+	 * This window has not loaded any HTML yet
+	 */
+	NONE,
+
+	/**
+	 * This window is loading HTML
+	 */
+	LOADING,
+
+	/**
+	 * This window is navigating to another HTML
+	 */
+	NAVIGATING,
+
+	/**
+	 * This window is done loading HTML
+	 */
+	READY
 }
 
-export class VSCodeWindow {
+export interface IVSCodeWindow {
+	id: number;
+	readyState: ReadyState;
+	win: Electron.BrowserWindow;
+
+	send(channel: string, ...args: any[]): void;
+}
+
+export class VSCodeWindow implements IVSCodeWindow {
 
 	public static menuBarHiddenKey = 'menuBarHidden';
 	public static colorThemeStorageKey = 'theme';
@@ -153,8 +150,7 @@ export class VSCodeWindow {
 		@ILogService private logService: ILogService,
 		@IEnvironmentService private environmentService: IEnvironmentService,
 		@IConfigurationService private configurationService: IConfigurationService,
-		@IStorageService private storageService: IStorageService,
-		@IBackupMainService private backupService: IBackupMainService
+		@IStorageService private storageService: IStorageService
 	) {
 		this.options = config;
 		this._lastFocusTime = -1;
@@ -443,11 +439,6 @@ export class VSCodeWindow {
 		delete configuration.filesToOpen;
 		delete configuration.filesToCreate;
 		delete configuration.filesToDiff;
-
-		// Update untitled files to restore so they come through in the reloaded window
-		if (configuration.workspacePath) {
-			configuration.untitledToRestore = this.backupService.getWorkspaceUntitledFileBackupsSync(Uri.file(configuration.workspacePath)).map(filePath => { return { filePath }; });
-		}
 
 		// Some configuration things get inherited if the window is being reloaded and we are
 		// in plugin development mode. These options are all development related.

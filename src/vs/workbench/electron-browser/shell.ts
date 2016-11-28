@@ -20,10 +20,10 @@ import product from 'vs/platform/product';
 import pkg from 'vs/platform/package';
 import { ContextViewService } from 'vs/platform/contextview/browser/contextViewService';
 import timer = require('vs/base/common/timer');
-import { IStartupFingerprint } from 'vs/workbench/electron-browser/common';
+import { IStartupFingerprint, IMemoryInfo } from 'vs/workbench/electron-browser/common';
 import { Workbench } from 'vs/workbench/electron-browser/workbench';
 import { StorageService, inMemoryLocalStorageInstance } from 'vs/workbench/services/storage/common/storageService';
-import { ITelemetryService, NullTelemetryService, loadExperiments } from 'vs/platform/telemetry/common/telemetry';
+import { ITelemetryService, NullTelemetryService, configurationTelemetry, loadExperiments } from 'vs/platform/telemetry/common/telemetry';
 import { ITelemetryAppenderChannel, TelemetryAppenderClient } from 'vs/platform/telemetry/common/telemetryIpc';
 import { TelemetryService, ITelemetryServiceConfig } from 'vs/platform/telemetry/common/telemetryService';
 import { IdleMonitor, UserStatus } from 'vs/platform/telemetry/browser/idleMonitor';
@@ -87,7 +87,6 @@ import { IUpdateService } from 'vs/platform/update/common/update';
 import { URLChannelClient } from 'vs/platform/url/common/urlIpc';
 import { IURLService } from 'vs/platform/url/common/url';
 import { ReloadWindowAction } from 'vs/workbench/electron-browser/actions';
-import { WorkspaceConfigurationService } from 'vs/workbench/services/configuration/node/configurationService';
 import { ExtensionHostProcessWorker } from 'vs/workbench/electron-browser/extensionHost';
 import { remote } from 'electron';
 import * as os from 'os';
@@ -195,10 +194,14 @@ export class WorkbenchShell {
 		timer.start(timer.Topic.STARTUP, '[renderer] overall workbench load', timers.perfBeforeWorkbenchOpen, 'Workbench has opened after this event with viewlet and editor restored').stop();
 
 		// Telemetry: workspace info
+		const { filesToOpen, filesToCreate, filesToDiff } = this.options;
 		this.telemetryService.publicLog('workspaceLoad', {
 			userAgent: navigator.userAgent,
 			windowSize: { innerHeight: window.innerHeight, innerWidth: window.innerWidth, outerHeight: window.outerHeight, outerWidth: window.outerWidth },
 			emptyWorkbench: !this.contextService.getWorkspace(),
+			'workbench.filesToOpen': filesToOpen && filesToOpen.length || undefined,
+			'workbench.filesToCreate': filesToCreate && filesToCreate.length || undefined,
+			'workbench.filesToDiff': filesToDiff && filesToDiff.length || undefined,
 			customKeybindingsCount,
 			theme: this.themeService.getColorTheme(),
 			language: platform.language,
@@ -209,13 +212,24 @@ export class WorkbenchShell {
 		const workbenchStarted = Date.now();
 		timers.workbenchStarted = new Date(workbenchStarted);
 		this.extensionService.onReady().done(() => {
+			const now = Date.now();
 			const initialStartup = !!timers.isInitialStartup;
 			const start = initialStartup ? timers.perfStartTime : timers.perfWindowLoadTime;
 			let totalmem: number;
+			let freemem: number;
 			let cpus: { count: number; speed: number; model: string; };
+			let platform: string;
+			let release: string;
+			let loadavg: number[];
+			let meminfo: IMemoryInfo;
 
 			try {
 				totalmem = os.totalmem();
+				freemem = os.freemem();
+				platform = os.platform();
+				release = os.release();
+				loadavg = os.loadavg();
+				meminfo = process.getProcessMemoryInfo();
 
 				const rawCpus = os.cpus();
 				if (rawCpus && rawCpus.length > 0) {
@@ -226,25 +240,32 @@ export class WorkbenchShell {
 			}
 
 			const startupTimeEvent: IStartupFingerprint = {
+				version: 1,
 				ellapsed: Math.round(workbenchStarted - start),
 				timers: {
 					ellapsedExtensions: Math.round(timers.perfAfterExtensionLoad - timers.perfBeforeExtensionLoad),
-					extensionsReady: Math.round(timers.perfAfterExtensionLoad - start),
+					ellapsedExtensionsReady: Math.round(timers.perfAfterExtensionLoad - start),
 					ellapsedRequire: Math.round(timers.perfAfterLoadWorkbenchMain - timers.perfBeforeLoadWorkbenchMain),
 					ellapsedViewletRestore: Math.round(restoreViewletDuration),
 					ellapsedEditorRestore: Math.round(restoreEditorsDuration),
-					ellapsedWorkbench: Math.round(workbenchStarted - timers.perfBeforeWorkbenchOpen)
+					ellapsedWorkbench: Math.round(workbenchStarted - timers.perfBeforeWorkbenchOpen),
+					ellapsedWindowLoadToRequire: Math.round(timers.perfBeforeLoadWorkbenchMain - timers.perfWindowLoadTime),
+					ellapsedTimersToTimersComputed: Date.now() - now
 				},
+				platform,
+				release,
 				totalmem,
+				freemem,
+				meminfo,
 				cpus,
+				loadavg,
 				initialStartup,
 				hasAccessibilitySupport: !!timers.hasAccessibilitySupport,
 				emptyWorkbench: !this.contextService.getWorkspace()
 			};
 
 			if (initialStartup) {
-				startupTimeEvent.timers.ellapsedMain = Math.round(timers.perfBeforeLoadWorkbenchMain - timers.perfStartTime);
-				startupTimeEvent.timers.windowLoad = Math.round(timers.perfWindowLoadTime - timers.perfStartTime);
+				startupTimeEvent.timers.ellapsedWindowLoad = Math.round(timers.perfWindowLoadTime - timers.perfStartTime);
 			}
 
 			this.telemetryService.publicLog('startupTime', startupTimeEvent);
@@ -253,7 +274,7 @@ export class WorkbenchShell {
 
 		// Telemetry: workspace tags
 		const workspaceStats: WorkspaceStats = <WorkspaceStats>this.workbench.getInstantiationService().createInstance(WorkspaceStats);
-		workspaceStats.reportWorkspaceTags();
+		workspaceStats.reportWorkspaceTags(this.options);
 
 		if ((platform.isLinux || platform.isMacintosh) && process.getuid() === 0) {
 			this.messageService.show(Severity.Warning, nls.localize('runningAsRoot', "It is recommended not to run Code as 'root'."));
@@ -300,12 +321,12 @@ export class WorkbenchShell {
 		}, errors.onUnexpectedError);
 
 		// Storage Sevice
-		const disableWorkspaceStorage = this.environmentService.extensionTestsPath || (!this.workspace && !this.environmentService.extensionDevelopmentPath); // without workspace or in any extension test, we use inMemory storage unless we develop an extension where we want to preserve state
+		const disableWorkspaceStorage = this.environmentService.extensionTestsPath || (!this.workspace && !this.environmentService.isExtensionDevelopment); // without workspace or in any extension test, we use inMemory storage unless we develop an extension where we want to preserve state
 		this.storageService = instantiationService.createInstance(StorageService, window.localStorage, disableWorkspaceStorage ? inMemoryLocalStorageInstance : window.localStorage);
 		serviceCollection.set(IStorageService, this.storageService);
 
 		// Telemetry
-		if (this.environmentService.isBuilt && !this.environmentService.extensionDevelopmentPath && !!product.enableTelemetry) {
+		if (this.environmentService.isBuilt && !this.environmentService.isExtensionDevelopment && !!product.enableTelemetry) {
 			const channel = getDelayedChannel<ITelemetryAppenderChannel>(sharedProcess.then(c => c.getChannel('telemetryAppender')));
 			const commit = product.commit;
 			const version = pkg.version;
@@ -314,7 +335,7 @@ export class WorkbenchShell {
 				appender: new TelemetryAppenderClient(channel),
 				commonProperties: resolveWorkbenchCommonProperties(this.storageService, commit, version),
 				piiPaths: [this.environmentService.appRoot, this.environmentService.extensionsPath],
-				experiments: loadExperiments(this.storageService, this.configurationService)
+				experiments: loadExperiments(this.contextService, this.storageService, this.configurationService)
 			};
 
 			const telemetryService = instantiationService.createInstance(TelemetryService, config);
@@ -331,14 +352,12 @@ export class WorkbenchShell {
 
 			disposables.add(telemetryService, errorTelemetry, listener, idleMonitor);
 		} else {
-			NullTelemetryService._experiments = loadExperiments(this.storageService, this.configurationService);
+			NullTelemetryService._experiments = loadExperiments(this.contextService, this.storageService, this.configurationService);
 			this.telemetryService = NullTelemetryService;
 		}
 
 		serviceCollection.set(ITelemetryService, this.telemetryService);
-		if (this.configurationService instanceof WorkspaceConfigurationService) {
-			this.configurationService.telemetryService = this.telemetryService;
-		}
+		disposables.add(configurationTelemetry(this.telemetryService, this.configurationService));
 
 		this.messageService = instantiationService.createInstance(MessageService, container);
 		serviceCollection.set(IMessageService, this.messageService);

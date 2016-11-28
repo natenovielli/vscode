@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-'use strict';
+import { IWindowSettings } from 'vs/platform/windows/common/windows';
 
 export interface IPath {
 	filePath: string;
@@ -15,35 +15,41 @@ export interface IOpenFileRequest {
 	filesToOpen?: IPath[];
 	filesToCreate?: IPath[];
 	filesToDiff?: IPath[];
-	untitledToRestore?: IPath[];
 }
 
 export interface IWindowConfiguration {
-	window: {
-		openFilesInNewWindow: boolean;
-		reopenFolders: string;
-		restoreFullscreen: boolean;
-		fullScreenZenMode: boolean;
-		zoomLevel: number;
-		titleBarStyle: 'native' | 'custom';
-	};
+	window: IWindowSettings;
+}
+
+export interface IMemoryInfo {
+	workingSetSize: number;
+	peakWorkingSetSize: number;
+	privateBytes: number;
+	sharedBytes: number;
 }
 
 export interface IStartupFingerprint {
+	version: number;
 	ellapsed: number;
 	timers: {
-		ellapsedMain?: number;
-		windowLoad?: number;
+		ellapsedWindowLoad?: number;
+		ellapsedWindowLoadToRequire: number;
 		ellapsedExtensions: number;
-		extensionsReady: number;
+		ellapsedExtensionsReady: number;
 		ellapsedRequire: number;
 		ellapsedViewletRestore: number;
 		ellapsedEditorRestore: number;
 		ellapsedWorkbench: number;
+		ellapsedTimersToTimersComputed: number;
 	};
+	platform: string;
+	release: string;
 	totalmem: number;
+	freemem: number;
+	meminfo: IMemoryInfo;
 	cpus: { count: number; speed: number; model: string; };
 	initialStartup: boolean;
 	hasAccessibilitySupport: boolean;
 	emptyWorkbench: boolean;
+	loadavg: number[];
 }

@@ -21,8 +21,7 @@ import { StopWatch } from 'vs/base/common/stopwatch';
 import errors = require('vs/base/common/errors');
 import { BackupService } from 'vs/workbench/services/backup/node/backupService';
 import { BackupFileService } from 'vs/workbench/services/backup/node/backupFileService';
-import { BackupModelService } from 'vs/workbench/services/backup/node/backupModelService';
-import { IBackupService, IBackupFileService, IBackupModelService } from 'vs/workbench/services/backup/common/backup';
+import { IBackupService, IBackupFileService } from 'vs/workbench/services/backup/common/backup';
 import { toErrorMessage } from 'vs/base/common/errorMessage';
 import { Registry } from 'vs/platform/platform';
 import { isWindows, isLinux, isMacintosh } from 'vs/base/common/platform';
@@ -76,6 +75,8 @@ import { IInstantiationService } from 'vs/platform/instantiation/common/instanti
 import { SyncDescriptor } from 'vs/platform/instantiation/common/descriptors';
 import { TextFileService } from 'vs/workbench/services/textfile/electron-browser/textFileService';
 import { ITextFileService } from 'vs/workbench/services/textfile/common/textfiles';
+import { ISCMService } from 'vs/workbench/services/scm/common/scm';
+import { SCMService } from 'vs/workbench/services/scm/common/scmService';
 import { TextModelResolverService } from 'vs/workbench/services/textmodelResolver/common/textModelResolverService';
 import { ITextModelResolverService } from 'vs/editor/common/services/resolverService';
 import { ServiceCollection } from 'vs/platform/instantiation/common/serviceCollection';
@@ -277,7 +278,7 @@ export class Workbench implements IPartService {
 
 				viewletRestoreStopWatch = StopWatch.create();
 				const viewletTimerEvent = timer.start(timer.Topic.STARTUP, strings.format('[renderer] open viewlet {0}', viewletIdToRestore));
-				compositeAndEditorPromises.push(this.viewletService.restoreViewlet(viewletIdToRestore).then(() => {
+				compositeAndEditorPromises.push(this.viewletService.openViewlet(viewletIdToRestore).then(() => {
 					viewletTimerEvent.stop();
 					viewletRestoreStopWatch.stop();
 				}));
@@ -306,14 +307,7 @@ export class Workbench implements IPartService {
 
 					editorOpenPromise = this.editorPart.openEditors(editors);
 				} else {
-					if (this.workbenchParams.options.untitledToRestore && this.workbenchParams.options.untitledToRestore.length) {
-						const untitledToRestoreInputs = this.workbenchParams.options.untitledToRestore.map(resourceInput => {
-							return this.untitledEditorService.createOrGet(null, null, resourceInput.resource);
-						});
-						editorOpenPromise = this.editorPart.restoreEditors(untitledToRestoreInputs);
-					} else {
-						editorOpenPromise = this.editorPart.restoreEditors();
-					}
+					editorOpenPromise = this.editorPart.restoreEditors();
 				}
 
 				return editorOpenPromise.then(() => {
@@ -386,9 +380,8 @@ export class Workbench implements IPartService {
 			}
 		}
 
-		// Empty workbench
+		// Empty workbench: some first time users will not have an untiled file; returning users will always have one
 		else if (!this.workbenchParams.workspace && this.telemetryService.getExperiments().openUntitledFile) {
-			// some first time users will not have an untiled file; returning users will always have one
 			return TPromise.as([{ input: this.untitledEditorService.createOrGet() }]);
 		}
 
@@ -474,8 +467,8 @@ export class Workbench implements IPartService {
 		// Text File Service
 		serviceCollection.set(ITextFileService, this.instantiationService.createInstance(TextFileService));
 
-		// Backup Model Service
-		serviceCollection.set(IBackupModelService, this.instantiationService.createInstance(BackupModelService));
+		// SCM Service
+		serviceCollection.set(ISCMService, this.instantiationService.createInstance(SCMService));
 
 		// Text Model Resolver Service
 		serviceCollection.set(ITextModelResolverService, this.instantiationService.createInstance(TextModelResolverService));
@@ -511,8 +504,7 @@ export class Workbench implements IPartService {
 		// Sidebar visibility
 		this.sideBarHidden = this.storageService.getBoolean(Workbench.sidebarHiddenSettingKey, StorageScope.WORKSPACE, false);
 		if (!this.contextService.getWorkspace()) {
-			// some first time users will see a sidebar; returning users will not see the sidebar
-			this.sideBarHidden = !this.telemetryService.getExperiments().showDefaultViewlet;
+			this.sideBarHidden = true; // we hide sidebar in single-file-mode
 		}
 
 		const viewletRegistry = Registry.as<ViewletRegistry>(ViewletExtensions.Viewlets);
@@ -604,7 +596,7 @@ export class Workbench implements IPartService {
 		const checkZenMode = (part: Parts) => !this.zenMode.active || this.zenMode.isPartVisible[part.toString()];
 		switch (part) {
 			case Parts.TITLEBAR_PART:
-				return !this.isTitleBarHidden() && checkZenMode(Parts.TITLEBAR_PART);
+				return this.getCustomTitleBarStyle() && !browser.isFullscreen();
 			case Parts.SIDEBAR_PART:
 				return !this.sideBarHidden && checkZenMode(Parts.SIDEBAR_PART);
 			case Parts.PANEL_PART:
@@ -618,13 +610,9 @@ export class Workbench implements IPartService {
 		return true; // any other part cannot be hidden
 	}
 
-	private isTitleBarHidden(): boolean {
-		return !this.getCustomTitleBarStyle() || browser.isFullscreen();
-	}
-
 	public getTitleBarOffset(): number {
 		let offset = 0;
-		if (!this.isTitleBarHidden()) {
+		if (this.isVisible(Parts.TITLEBAR_PART)) {
 			offset = 22 / browser.getZoomFactor(); // adjust the position based on title bar size and zoom factor
 		}
 
@@ -636,7 +624,7 @@ export class Workbench implements IPartService {
 			return null; // custom title bar is only supported on Mac currently
 		}
 
-		const isDev = !this.environmentService.isBuilt || this.environmentService.extensionDevelopmentPath;
+		const isDev = !this.environmentService.isBuilt || this.environmentService.isExtensionDevelopment;
 		if (isDev) {
 			return null; // not enabled when developing due to https://github.com/electron/electron/issues/3647
 		}
@@ -1071,20 +1059,17 @@ export class Workbench implements IPartService {
 		this.zenMode.active = !this.zenMode.active;
 		this.inZenMode.set(this.zenMode.active);
 		Object.keys(this.zenMode.isPartVisible).forEach(key => this.zenMode.isPartVisible[key] = false);
-		if (!this.zenMode.active && this.zenMode.transitionedToFullScreen && browser.isFullscreen()) {
-			// Zen mode transitioned to full screen, now that we are out of zen mode we need to go out of full screen
-			this.windowService.toggleFullScreen();
-		}
+		// Check if zen mode transitioned to full screen and if now we are out of zen mode -> we need to go out of full screen
+		let toggleFullScreen = !this.zenMode.active && this.zenMode.transitionedToFullScreen && browser.isFullscreen();
 
 		if (this.zenMode.active) {
 			const windowConfig = this.configurationService.getConfiguration<IWindowConfiguration>();
-			this.zenMode.transitionedToFullScreen = !browser.isFullscreen() && windowConfig.window.fullScreenZenMode;
-			if (this.zenMode.transitionedToFullScreen) {
-				this.windowService.toggleFullScreen();
-			}
+			toggleFullScreen = !browser.isFullscreen() && windowConfig.window.fullScreenZenMode;
+			this.zenMode.transitionedToFullScreen = toggleFullScreen;
 		}
 
-		this.layout();
+		(toggleFullScreen ? this.windowService.toggleFullScreen() : TPromise.as(null))
+			.done(() => this.layout(), errors.onUnexpectedError);
 	}
 
 	private shouldRestoreLastOpenedViewlet(): boolean {

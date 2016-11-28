@@ -14,17 +14,32 @@ import path = require('path');
 import extfs = require('vs/base/node/extfs');
 import pfs = require('vs/base/node/pfs');
 import Uri from 'vs/base/common/uri';
-import { TestEnvironmentService } from 'vs/test/utils/servicesTestUtils';
-import { BackupFileService } from 'vs/workbench/services/backup/node/backupFileService';
+import { BackupFileService, BackupFilesModel } from 'vs/workbench/services/backup/node/backupFileService';
 import { FileService } from 'vs/workbench/services/files/node/fileService';
+import { EnvironmentService } from 'vs/platform/environment/node/environmentService';
+import { parseArgs } from 'vs/platform/environment/node/argv';
+
+class TestEnvironmentService extends EnvironmentService {
+
+	constructor(private _backupHome: string, private _backupWorkspacesPath: string) {
+		super(parseArgs(process.argv), process.execPath);
+	}
+
+	get backupHome(): string { return this._backupHome; }
+
+	get backupWorkspacesPath(): string { return this._backupWorkspacesPath; }
+}
 
 class TestBackupFileService extends BackupFileService {
 	constructor(workspace: Uri, backupHome: string, workspacesJsonPath: string) {
 		const fileService = new FileService(workspace.fsPath, { disableWatcher: true }, null);
-		super(workspace, TestEnvironmentService, fileService);
+		const testEnvironmentService = new TestEnvironmentService(backupHome, workspacesJsonPath);
 
-		this.backupHome = backupHome;
-		this.workspacesJsonPath = workspacesJsonPath;
+		super(workspace, testEnvironmentService, fileService);
+	}
+
+	public getBackupResource(resource: Uri): Uri {
+		return super.getBackupResource(resource);
 	}
 }
 
@@ -42,7 +57,7 @@ suite('BackupFileService', () => {
 	const barBackupPath = path.join(workspaceBackupPath, 'file', crypto.createHash('md5').update(barFile.fsPath).digest('hex'));
 	const untitledBackupPath = path.join(workspaceBackupPath, 'untitled', untitledFile.fsPath);
 
-	let service: BackupFileService;
+	let service: TestBackupFileService;
 
 	setup(done => {
 		service = new TestBackupFileService(workspaceResource, backupHome, workspacesJsonPath);
@@ -50,7 +65,7 @@ suite('BackupFileService', () => {
 		// Delete any existing backups completely and then re-create it.
 		extfs.del(backupHome, os.tmpdir(), () => {
 			pfs.mkdirp(backupHome).then(() => {
-				pfs.writeFileAndFlush(workspacesJsonPath, '').then(() => {
+				pfs.writeFile(workspacesJsonPath, '').then(() => {
 					done();
 				});
 			});
@@ -79,14 +94,12 @@ suite('BackupFileService', () => {
 	});
 
 	test('doesTextFileHaveBackup should return whether a backup resource exists', done => {
-		service.hasTextFileBackup(fooFile).then(exists => {
-			assert.equal(exists, false);
-			pfs.mkdirp(path.dirname(fooBackupPath)).then(() => {
-				fs.writeFileSync(fooBackupPath, 'foo');
-				service.hasTextFileBackup(fooFile).then(exists2 => {
-					assert.equal(exists2, true);
-					done();
-				});
+		pfs.mkdirp(path.dirname(fooBackupPath)).then(() => {
+			fs.writeFileSync(fooBackupPath, 'foo');
+			service = new TestBackupFileService(workspaceResource, backupHome, workspacesJsonPath);
+			service.hasBackup(fooFile).then(exists2 => {
+				assert.equal(exists2, true);
+				done();
 			});
 		});
 	});
@@ -157,63 +170,64 @@ suite('BackupFileService', () => {
 		});
 	});
 
-	test('getWorkspaceBackupPaths should return [] when workspaces.json doesn\'t exist', () => {
-		fs.unlinkSync(workspacesJsonPath);
-		service.getWorkspaceBackupPaths().then(paths => assert.deepEqual(paths, []));
+	test('BackupFilesModel - simple', () => {
+		const model = new BackupFilesModel();
+
+		const resource1 = Uri.file('test.html');
+
+		assert.equal(model.has(resource1), false);
+
+		model.add(resource1);
+
+		assert.equal(model.has(resource1), true);
+		assert.equal(model.has(resource1, 0), true);
+		assert.equal(model.has(resource1, 1), false);
+
+		model.remove(resource1);
+
+		assert.equal(model.has(resource1), false);
+
+		model.add(resource1);
+
+		assert.equal(model.has(resource1), true);
+		assert.equal(model.has(resource1, 0), true);
+		assert.equal(model.has(resource1, 1), false);
+
+		model.clear();
+
+		assert.equal(model.has(resource1), false);
+
+		model.add(resource1, 1);
+
+		assert.equal(model.has(resource1), true);
+		assert.equal(model.has(resource1, 0), false);
+		assert.equal(model.has(resource1, 1), true);
+
+		const resource2 = Uri.file('test1.html');
+		const resource3 = Uri.file('test2.html');
+		const resource4 = Uri.file('test3.html');
+
+		model.add(resource2);
+		model.add(resource3);
+		model.add(resource4);
+
+		assert.equal(model.has(resource1), true);
+		assert.equal(model.has(resource2), true);
+		assert.equal(model.has(resource3), true);
+		assert.equal(model.has(resource4), true);
 	});
 
-	test('getWorkspaceBackupPathsSync should return [] when workspaces.json is not properly formed JSON #1', () => {
-		fs.writeFileSync(workspacesJsonPath, '');
-		service.getWorkspaceBackupPaths().then(paths => assert.deepEqual(paths, []));
-	});
+	test('BackupFilesModel - resolve', (done) => {
+		pfs.mkdirp(path.dirname(fooBackupPath)).then(() => {
+			fs.writeFileSync(fooBackupPath, 'foo');
 
-	test('getWorkspaceBackupPathsSync should return [] when workspaces.json is not properly formed JSON #1', () => {
-		fs.writeFileSync(workspacesJsonPath, '{]');
-		service.getWorkspaceBackupPaths().then(paths => assert.deepEqual(paths, []));
-	});
+			const model = new BackupFilesModel();
 
-	test('getWorkspaceBackupPathsSync should return [] when workspaces.json is not properly formed JSON #1', () => {
-		fs.writeFileSync(workspacesJsonPath, 'foo');
-		service.getWorkspaceBackupPaths().then(paths => assert.deepEqual(paths, []));
-	});
+			model.resolve(workspaceBackupPath).then(model => {
+				assert.equal(model.has(Uri.file(fooBackupPath)), true);
 
-	test('getWorkspaceBackupPathsSync should return [] when folderWorkspaces in workspaces.json is absent', () => {
-		fs.writeFileSync(workspacesJsonPath, '{}');
-		service.getWorkspaceBackupPaths().then(paths => assert.deepEqual(paths, []));
-	});
-
-	test('getWorkspaceBackupPaths should return [] when folderWorkspaces in workspaces.json is not a string array #1', () => {
-		fs.writeFileSync(workspacesJsonPath, '{"folderWorkspaces":{}}');
-		service.getWorkspaceBackupPaths().then(paths => assert.deepEqual(paths, []));
-	});
-
-	test('getWorkspaceBackupPaths should return [] when folderWorkspaces in workspaces.json is not a string array #2', () => {
-		fs.writeFileSync(workspacesJsonPath, '{"folderWorkspaces":{"foo": ["bar"]}}');
-		service.getWorkspaceBackupPaths().then(paths => assert.deepEqual(paths, []));
-	});
-
-	test('getWorkspaceBackupPaths should return [] when folderWorkspaces in workspaces.json is not a string array #3', () => {
-		fs.writeFileSync(workspacesJsonPath, '{"folderWorkspaces":{"foo": []}}');
-		service.getWorkspaceBackupPaths().then(paths => assert.deepEqual(paths, []));
-	});
-
-	test('getWorkspaceBackupPaths should return [] when folderWorkspaces in workspaces.json is not a string array #4', () => {
-		fs.writeFileSync(workspacesJsonPath, '{"folderWorkspaces":{"foo": "bar"}}');
-		service.getWorkspaceBackupPaths().then(paths => assert.deepEqual(paths, []));
-	});
-
-	test('getWorkspaceBackupPaths should return [] when folderWorkspaces in workspaces.json is not a string array #5', () => {
-		fs.writeFileSync(workspacesJsonPath, '{"folderWorkspaces":"foo"}');
-		service.getWorkspaceBackupPaths().then(paths => assert.deepEqual(paths, []));
-	});
-
-	test('getWorkspaceBackupPaths should return [] when folderWorkspaces in workspaces.json is not a string array #6', () => {
-		fs.writeFileSync(workspacesJsonPath, '{"folderWorkspaces":1}');
-		service.getWorkspaceBackupPaths().then(paths => assert.deepEqual(paths, []));
-	});
-
-	test('getWorkspaceBackupPaths should return the contents of folderWorkspaces in workspaces.json', () => {
-		fs.writeFileSync(workspacesJsonPath, '{"folderWorkspaces":["foo", "bar"]}');
-		service.getWorkspaceBackupPaths().then(paths => assert.deepEqual(paths, ['foo', 'bar']));
+				done();
+			});
+		});
 	});
 });

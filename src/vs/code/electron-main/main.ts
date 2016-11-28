@@ -15,7 +15,7 @@ import { IWindowsMainService, WindowsManager } from 'vs/code/electron-main/windo
 import { IWindowsService } from 'vs/platform/windows/common/windows';
 import { WindowsChannel } from 'vs/platform/windows/common/windowsIpc';
 import { WindowsService } from 'vs/platform/windows/electron-main/windowsService';
-import { ILifecycleService, LifecycleService } from 'vs/code/electron-main/lifecycle';
+import { LifecycleService, ILifecycleService } from 'vs/code/electron-main/lifecycle';
 import { VSCodeMenu } from 'vs/code/electron-main/menus';
 import { IUpdateService } from 'vs/platform/update/common/update';
 import { UpdateChannel } from 'vs/platform/update/common/updateIpc';
@@ -35,7 +35,7 @@ import { SyncDescriptor } from 'vs/platform/instantiation/common/descriptors';
 import { ILogService, MainLogService } from 'vs/code/electron-main/log';
 import { IStorageService, StorageService } from 'vs/code/electron-main/storage';
 import { IBackupMainService } from 'vs/platform/backup/common/backup';
-import { BackupMainService } from 'vs/platform/backup/node/backupMainService';
+import { BackupMainService } from 'vs/platform/backup/electron-main/backupMainService';
 import { IEnvironmentService, ParsedArgs } from 'vs/platform/environment/common/environment';
 import { EnvironmentService } from 'vs/platform/environment/node/environmentService';
 import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
@@ -154,7 +154,7 @@ function main(accessor: ServicesAccessor, mainIpcServer: Server, userEnv: platfo
 	services.set(IWindowsService, new SyncDescriptor(WindowsService));
 	services.set(ILaunchService, new SyncDescriptor(LaunchService));
 
-	if (environmentService.isBuilt && !environmentService.extensionDevelopmentPath && !!product.enableTelemetry) {
+	if (environmentService.isBuilt && !environmentService.isExtensionDevelopment && !!product.enableTelemetry) {
 		const channel = getDelayedChannel<ITelemetryAppenderChannel>(sharedProcess.then(c => c.getChannel('telemetryAppender')));
 		const appender = new TelemetryAppenderClient(channel);
 		const commonProperties = resolveCommonProperties(product.commit, pkg.version);

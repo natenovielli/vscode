@@ -17,10 +17,12 @@ import { ServicesAccessor } from 'vs/platform/instantiation/common/instantiation
 import { IKeybindings } from 'vs/platform/keybinding/common/keybinding';
 import { KeybindingsRegistry } from 'vs/platform/keybinding/common/keybindingsRegistry';
 import { IPartService } from 'vs/workbench/services/part/common/partService';
+import { CommonEditorRegistry } from 'vs/editor/common/editorCommonExtensions';
 import { IWindowIPCService } from 'vs/workbench/services/window/electron-browser/windowService';
-import { CloseEditorAction, ReportIssueAction, ZoomResetAction, ZoomOutAction, ZoomInAction, ToggleFullScreenAction, ToggleMenuBarAction, CloseFolderAction, CloseWindowAction, SwitchWindow, NewWindowAction, CloseMessagesAction } from 'vs/workbench/electron-browser/actions';
+import { CloseEditorAction, KeybindingsReferenceAction, ReportIssueAction, ZoomResetAction, ZoomOutAction, ZoomInAction, ToggleFullScreenAction, ToggleMenuBarAction, CloseFolderAction, CloseWindowAction, SwitchWindow, NewWindowAction, CloseMessagesAction } from 'vs/workbench/electron-browser/actions';
 import { MessagesVisibleContext, NoEditorsVisibleContext, InZenModeContext } from 'vs/workbench/electron-browser/workbench';
 import { IJSONSchema } from 'vs/base/common/jsonSchema';
+import { IWindowsService } from 'vs/platform/windows/common/windows';
 
 const closeEditorOrWindowKeybindings: IKeybindings = { primary: KeyMod.CtrlCmd | KeyCode.KEY_W, win: { primary: KeyMod.CtrlCmd | KeyCode.F4, secondary: [KeyMod.CtrlCmd | KeyCode.KEY_W] } };
 
@@ -35,6 +37,9 @@ workbenchActionsRegistry.registerWorkbenchAction(new SyncActionDescriptor(Switch
 workbenchActionsRegistry.registerWorkbenchAction(new SyncActionDescriptor(CloseFolderAction, CloseFolderAction.ID, CloseFolderAction.LABEL, { primary: KeyChord(KeyMod.CtrlCmd | KeyCode.KEY_K, KeyCode.KEY_F) }), 'File: Close Folder', fileCategory);
 if (!!product.reportIssueUrl) {
 	workbenchActionsRegistry.registerWorkbenchAction(new SyncActionDescriptor(ReportIssueAction, ReportIssueAction.ID, ReportIssueAction.LABEL), 'Help: Report Issues', helpCategory);
+}
+if (KeybindingsReferenceAction.AVAILABLE) {
+	workbenchActionsRegistry.registerWorkbenchAction(new SyncActionDescriptor(KeybindingsReferenceAction, KeybindingsReferenceAction.ID, KeybindingsReferenceAction.LABEL, { primary: KeyChord(KeyMod.CtrlCmd | KeyCode.KEY_K, KeyMod.CtrlCmd | KeyCode.KEY_R) }), 'Help: Keyboard Shortcuts Reference', helpCategory);
 }
 workbenchActionsRegistry.registerWorkbenchAction(
 	new SyncActionDescriptor(ZoomInAction, ZoomInAction.ID, ZoomInAction.LABEL, {
@@ -73,14 +78,26 @@ KeybindingsRegistry.registerCommandAndKeybindingRule({
 });
 
 KeybindingsRegistry.registerCommandAndKeybindingRule({
-	id: '_workbench.exitZenMode',
-	weight: 0,
+	id: 'workbench.action.exitZenMode',
+	weight: CommonEditorRegistry.commandWeight(-1000),
 	handler(accessor: ServicesAccessor, configurationOrName: any) {
 		const partService = accessor.get(IPartService);
 		partService.toggleZenMode();
 	},
 	when: InZenModeContext,
-	primary: KeyCode.Escape
+	primary: KeyChord(KeyCode.Escape, KeyCode.Escape)
+});
+
+KeybindingsRegistry.registerCommandAndKeybindingRule({
+	id: 'workbench.action.quit',
+	weight: KeybindingsRegistry.WEIGHT.workbenchContrib(),
+	handler(accessor: ServicesAccessor) {
+		const windowsService = accessor.get(IWindowsService);
+		windowsService.quit();
+	},
+	when: void 0,
+	primary: KeyMod.CtrlCmd | KeyCode.KEY_Q,
+	win: { primary: void 0 }
 });
 
 // Configuration: Workbench

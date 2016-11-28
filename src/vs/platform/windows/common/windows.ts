@@ -37,6 +37,7 @@ export interface IWindowsService {
 	unmaximizeWindow(windowId: number): TPromise<void>;
 	setDocumentEdited(windowId: number, flag: boolean): TPromise<void>;
 	toggleMenuBar(windowId: number): TPromise<void>;
+	quit(): TPromise<void>;
 
 	// Global methods
 	// TODO@joao: rename, shouldn't this be openWindow?
@@ -44,6 +45,7 @@ export interface IWindowsService {
 	openNewWindow(): TPromise<void>;
 	showWindow(windowId: number): TPromise<void>;
 	getWindows(): TPromise<{ id: number; path: string; title: string; }[]>;
+	getWindowCount(): TPromise<number>;
 	log(severity: string, ...messages: string[]): TPromise<void>;
 	// TODO@joao: what?
 	closeExtensionHostWindow(extensionDevelopmentPath: string): TPromise<void>;
@@ -82,4 +84,13 @@ export interface IWindowService {
 	isMaximized(): TPromise<boolean>;
 	maximizeWindow(): TPromise<void>;
 	unmaximizeWindow(): TPromise<void>;
+}
+
+export interface IWindowSettings {
+	openFilesInNewWindow: boolean;
+	reopenFolders: 'all' | 'one' | 'none';
+	restoreFullscreen: boolean;
+	fullScreenZenMode: boolean;
+	zoomLevel: number;
+	titleBarStyle: 'native' | 'custom';
 }

@@ -41,6 +41,8 @@ import URI from 'vs/base/common/uri';
 import { ReloadWindowAction, ToggleDevToolsAction, ShowStartupPerformance, OpenRecentAction } from 'vs/workbench/electron-browser/actions';
 import { IEnvironmentService } from 'vs/platform/environment/common/environment';
 import { KeyMod, KeyCode } from 'vs/base/common/keyCodes';
+import { IViewletService } from 'vs/workbench/services/viewlet/browser/viewlet';
+import { IExtensionService } from 'vs/platform/extensions/common/extensions';
 
 import { ipcRenderer as ipc, webFrame, remote } from 'electron';
 
@@ -76,7 +78,9 @@ export class ElectronIntegration {
 		@IWorkbenchEditorService private editorService: IWorkbenchEditorService,
 		@IUntitledEditorService private untitledEditorService: IUntitledEditorService,
 		@IEnvironmentService private environmentService: IEnvironmentService,
-		@IThemeService private themeService: IThemeService
+		@IExtensionService private extensionService: IExtensionService,
+		@IThemeService private themeService: IThemeService,
+		@IViewletService private viewletService: IViewletService
 	) {
 	}
 
@@ -106,6 +110,11 @@ export class ElectronIntegration {
 					ipc.send('vscode:keybindingsResolved', JSON.stringify(keybindings));
 				}
 			}, () => errors.onUnexpectedError);
+		});
+
+		// Send over all extension viewlets when extensions are ready
+		this.extensionService.onReady().then(() => {
+			ipc.send('vscode:extensionViewlets', JSON.stringify(this.viewletService.getViewlets().filter(v => !!v.extensionId).map(v => { return { id: v.id, label: v.name }; })));
 		});
 
 		ipc.on('vscode:reportError', (event, error) => {
@@ -211,7 +220,7 @@ export class ElectronIntegration {
 		// Developer related actions
 		const developerCategory = nls.localize('developer', "Developer");
 		const workbenchActionsRegistry = Registry.as<IWorkbenchActionRegistry>(Extensions.WorkbenchActions);
-		const isDeveloping = !this.environmentService.isBuilt || !!this.environmentService.extensionDevelopmentPath;
+		const isDeveloping = !this.environmentService.isBuilt || this.environmentService.isExtensionDevelopment;
 		workbenchActionsRegistry.registerWorkbenchAction(new SyncActionDescriptor(ReloadWindowAction, ReloadWindowAction.ID, ReloadWindowAction.LABEL, isDeveloping ? { primary: KeyMod.CtrlCmd | KeyCode.KEY_R } : void 0), 'Reload Window');
 		workbenchActionsRegistry.registerWorkbenchAction(new SyncActionDescriptor(ToggleDevToolsAction, ToggleDevToolsAction.ID, ToggleDevToolsAction.LABEL, isDeveloping ? { primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KEY_I, mac: { primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyCode.KEY_I } } : void 0), 'Developer: Toggle Developer Tools', developerCategory);
 		workbenchActionsRegistry.registerWorkbenchAction(new SyncActionDescriptor(ShowStartupPerformance, ShowStartupPerformance.ID, ShowStartupPerformance.LABEL), 'Developer: Startup Performance', developerCategory);

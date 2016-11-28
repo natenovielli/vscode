@@ -39,8 +39,8 @@ const nodeModules = ['electron', 'original-fs']
 // Build
 
 const builtInExtensions = [
-	{ name: 'ms-vscode.node-debug', version: '1.8.1' },
-	{ name: 'ms-vscode.node-debug2', version: '1.8.1' }
+	{ name: 'ms-vscode.node-debug', version: '1.8.5' },
+	{ name: 'ms-vscode.node-debug2', version: '1.8.2' }
 ];
 
 const vscodeEntryPoints = _.flatten([
@@ -66,6 +66,7 @@ const vscodeResources = [
 	'out-build/vs/workbench/parts/git/**/*.html',
 	'out-build/vs/workbench/parts/git/**/*.sh',
 	'out-build/vs/workbench/parts/html/browser/webview.html',
+	'out-build/vs/workbench/parts/html/browser/webview-pre.js',
 	'out-build/vs/**/markdown.css',
 	'out-build/vs/workbench/parts/tasks/**/*.json',
 	'out-build/vs/workbench/parts/terminal/electron-browser/terminalProcess.js',

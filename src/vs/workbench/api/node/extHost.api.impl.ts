@@ -211,7 +211,7 @@ export function createApiFactory(initData: IInitData, threadService: IThreadServ
 				return languageFeatures.registerSignatureHelpProvider(selector, provider, triggerCharacters);
 			},
 			registerCompletionItemProvider(selector: vscode.DocumentSelector, provider: vscode.CompletionItemProvider, ...triggerCharacters: string[]): vscode.Disposable {
-				return languageFeatures.registerCompletionItemProvider(selector, provider, triggerCharacters, extension);
+				return languageFeatures.registerCompletionItemProvider(selector, provider, triggerCharacters);
 			},
 			registerDocumentLinkProvider(selector: vscode.DocumentSelector, provider: vscode.DocumentLinkProvider): vscode.Disposable {
 				return languageFeatures.registerDocumentLinkProvider(selector, provider);
@@ -269,7 +269,7 @@ export function createApiFactory(initData: IInitData, threadService: IThreadServ
 				return extHostQuickOpen.showInput(options, token);
 			},
 			createStatusBarItem(position?: vscode.StatusBarAlignment, priority?: number): vscode.StatusBarItem {
-				return extHostStatusBar.createStatusBarEntry(<number>position, priority);
+				return extHostStatusBar.createStatusBarEntry(extension.id, <number>position, priority);
 			},
 			setStatusBarMessage(text: string, timeoutOrThenable?: number | Thenable<any>): vscode.Disposable {
 				return extHostStatusBar.setStatusBarMessage(text, timeoutOrThenable);
