@@ -7,6 +7,7 @@
 
 import 'vs/css!./media/search.contribution';
 import { Registry } from 'vs/platform/platform';
+import { registerSingleton } from 'vs/platform/instantiation/common/extensions';
 import { ViewletRegistry, Extensions as ViewletExtensions, ViewletDescriptor } from 'vs/workbench/browser/viewlet';
 import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from 'vs/platform/configuration/common/configurationRegistry';
 import nls = require('vs/nls');
@@ -21,7 +22,7 @@ import { KeybindingsRegistry } from 'vs/platform/keybinding/common/keybindingsRe
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
 import { AsyncDescriptor } from 'vs/platform/instantiation/common/descriptors';
 import { IWorkspaceContextService } from 'vs/platform/workspace/common/workspace';
-import { IQuickOpenService } from 'vs/workbench/services/quickopen/common/quickOpenService';
+import { IQuickOpenService } from 'vs/platform/quickOpen/common/quickOpen';
 import { IViewletService } from 'vs/workbench/services/viewlet/browser/viewlet';
 import { KeyMod, KeyCode } from 'vs/base/common/keyCodes';
 import * as searchActions from 'vs/workbench/parts/search/browser/searchActions';
@@ -30,7 +31,9 @@ import { registerContributions as replaceContributions } from 'vs/workbench/part
 import { registerContributions as searchWidgetContributions } from 'vs/workbench/parts/search/browser/searchWidget';
 import { ContextKeyExpr } from 'vs/platform/contextkey/common/contextkey';
 import { ToggleCaseSensitiveKeybinding, ToggleRegexKeybinding, ToggleWholeWordKeybinding, ShowPreviousFindTermKeybinding, ShowNextFindTermKeybinding } from 'vs/editor/contrib/find/common/findModel';
+import { ISearchWorkbenchService, SearchWorkbenchService } from 'vs/workbench/parts/search/common/searchModel';
 
+registerSingleton(ISearchWorkbenchService, SearchWorkbenchService);
 replaceContributions();
 searchWidgetContributions();
 
@@ -123,17 +126,20 @@ registry.registerWorkbenchAction(new SyncActionDescriptor(searchActions.FocusAct
 registry.registerWorkbenchAction(new SyncActionDescriptor(searchActions.FindInFilesAction, Constants.FindInFilesActionId, nls.localize('findInFiles', "Find in Files"), { primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KEY_F },
 	Constants.SearchInputBoxFocussedKey.toNegated()), 'Find in Files');
 
+registry.registerWorkbenchAction(new SyncActionDescriptor(searchActions.FocusNextSearchResultAction, searchActions.FocusNextSearchResultAction.ID, searchActions.FocusNextSearchResultAction.LABEL, { primary: KeyCode.F4 }), '');
+registry.registerWorkbenchAction(new SyncActionDescriptor(searchActions.FocusPreviousSearchResultAction, searchActions.FocusPreviousSearchResultAction.ID, searchActions.FocusPreviousSearchResultAction.LABEL, { primary: KeyMod.Shift | KeyCode.F4 }), '');
+
 registry.registerWorkbenchAction(new SyncActionDescriptor(searchActions.ReplaceInFilesAction, searchActions.ReplaceInFilesAction.ID, searchActions.ReplaceInFilesAction.LABEL, { primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KEY_H }), 'Replace in Files');
 registry.registerWorkbenchAction(new SyncActionDescriptor(searchActions.CloseReplaceAction, Constants.CloseReplaceWidgetActionId, '', { primary: KeyCode.Escape }, ContextKeyExpr.and(Constants.SearchViewletVisibleKey, Constants.ReplaceInputBoxFocussedKey)), '');
 
 registry.registerWorkbenchAction(new SyncActionDescriptor(searchActions.ShowNextSearchTermAction, searchActions.ShowNextSearchTermAction.ID, searchActions.ShowNextSearchTermAction.LABEL, ShowNextFindTermKeybinding,
-	ContextKeyExpr.and(Constants.SearchViewletVisibleKey, Constants.SearchInputBoxFocussedKey)), '');
+	ContextKeyExpr.and(Constants.SearchViewletVisibleKey, Constants.SearchInputBoxFocussedKey)), 'Show next search term');
 registry.registerWorkbenchAction(new SyncActionDescriptor(searchActions.ShowPreviousSearchTermAction, searchActions.ShowPreviousSearchTermAction.ID, searchActions.ShowPreviousSearchTermAction.LABEL, ShowPreviousFindTermKeybinding,
-	ContextKeyExpr.and(Constants.SearchViewletVisibleKey, Constants.SearchInputBoxFocussedKey)), '');
+	ContextKeyExpr.and(Constants.SearchViewletVisibleKey, Constants.SearchInputBoxFocussedKey)), 'Show previous search term');
 registry.registerWorkbenchAction(new SyncActionDescriptor(searchActions.FocusNextInputAction, searchActions.FocusNextInputAction.ID, searchActions.FocusNextInputAction.LABEL, { primary: KeyCode.DownArrow },
-	ContextKeyExpr.and(Constants.SearchViewletVisibleKey, Constants.InputBoxFocussedKey)), '');
+	ContextKeyExpr.and(Constants.SearchViewletVisibleKey, Constants.InputBoxFocussedKey)), 'Focus next input box');
 registry.registerWorkbenchAction(new SyncActionDescriptor(searchActions.FocusPreviousInputAction, searchActions.FocusPreviousInputAction.ID, searchActions.FocusPreviousInputAction.LABEL, { primary: KeyCode.UpArrow },
-	ContextKeyExpr.and(Constants.SearchViewletVisibleKey, Constants.InputBoxFocussedKey, Constants.SearchInputBoxFocussedKey.toNegated())), '');
+	ContextKeyExpr.and(Constants.SearchViewletVisibleKey, Constants.InputBoxFocussedKey, Constants.SearchInputBoxFocussedKey.toNegated())), 'Focus previous input box');
 
 registry.registerWorkbenchAction(new SyncActionDescriptor(searchActions.ToggleCaseSensitiveAction, Constants.ToggleCaseSensitiveActionId, '', ToggleCaseSensitiveKeybinding, ContextKeyExpr.and(Constants.SearchViewletVisibleKey, Constants.SearchInputBoxFocussedKey)), '');
 registry.registerWorkbenchAction(new SyncActionDescriptor(searchActions.ToggleWholeWordAction, Constants.ToggleWholeWordActionId, '', ToggleWholeWordKeybinding, ContextKeyExpr.and(Constants.SearchViewletVisibleKey, Constants.SearchInputBoxFocussedKey)), '');

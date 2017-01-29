@@ -16,13 +16,14 @@ import { ActionBar, Separator } from 'vs/base/browser/ui/actionbar/actionbar';
 import { IKeyboardEvent } from 'vs/base/browser/keyboardEvent';
 import dom = require('vs/base/browser/dom');
 import { IMouseEvent, DragMouseEvent } from 'vs/base/browser/mouseEvent';
-import { IResourceInput, IEditorInput } from 'vs/platform/editor/common/editor';
+import { IResourceInput, IEditorInput, Position } from 'vs/platform/editor/common/editor';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
 import { ITelemetryService } from 'vs/platform/telemetry/common/telemetry';
 import { IEditorGroupService } from 'vs/workbench/services/group/common/groupService';
 import { IContextMenuService } from 'vs/platform/contextview/browser/contextView';
 import { IKeybindingService } from 'vs/platform/keybinding/common/keybinding';
-import { UntitledEditorInput, IEditorGroup, IEditorStacksModel, getUntitledOrFileResource } from 'vs/workbench/common/editor';
+import { IEditorGroup, IEditorStacksModel, toResource } from 'vs/workbench/common/editor';
+import { UntitledEditorInput } from 'vs/workbench/common/editor/untitledEditorInput';
 import { ContributableActionProvider } from 'vs/workbench/browser/actionBarRegistry';
 import { asFileResource } from 'vs/workbench/parts/files/common/files';
 import { ITextFileService, AutoSaveMode } from 'vs/workbench/services/textfile/common/textfiles';
@@ -65,7 +66,7 @@ export class OpenEditor {
 	}
 
 	public getResource(): uri {
-		return getUntitledOrFileResource(this.editor, true);
+		return toResource(this.editor, { supportSideBySide: true, filter: ['file', 'untitled'] });
 	}
 }
 
@@ -261,7 +262,7 @@ export class Controller extends treedefaults.DefaultController {
 			}
 
 			tree.setSelection([element], payload);
-			this.openEditor(element, isDoubleClick);
+			this.openEditor(element, isDoubleClick, event.ctrlKey || event.metaKey);
 		}
 
 		return true;
@@ -287,7 +288,7 @@ export class Controller extends treedefaults.DefaultController {
 			return true;
 		}
 
-		this.openEditor(element, false);
+		this.openEditor(element, false, event.ctrlKey || event.metaKey);
 
 		return super.onEnter(tree, event);
 	}
@@ -324,16 +325,16 @@ export class Controller extends treedefaults.DefaultController {
 		return true;
 	}
 
-	private openEditor(element: OpenEditor, pinEditor: boolean): void {
+	private openEditor(element: OpenEditor, pinEditor: boolean, openToSide: boolean): void {
 		if (element) {
 			this.telemetryService.publicLog('workbenchActionExecuted', { id: 'workbench.files.openFile', from: 'openEditors' });
-			const position = this.model.positionOfGroup(element.editorGroup);
-			if (pinEditor) {
-				this.editorGroupService.pinEditor(element.editorGroup, element.editorInput);
+			let position = this.model.positionOfGroup(element.editorGroup);
+			if (openToSide && position !== Position.THREE) {
+				position++;
 			}
-			this.editorGroupService.activateGroup(element.editorGroup);
-			this.editorService.openEditor(element.editorInput, { preserveFocus: !pinEditor }, position)
-				.done(() => this.editorGroupService.activateGroup(element.editorGroup), errors.onUnexpectedError);
+			this.editorGroupService.activateGroup(this.model.groupAt(position));
+			this.editorService.openEditor(element.editorInput, { preserveFocus: !pinEditor, pinned: pinEditor }, position)
+				.done(() => this.editorGroupService.activateGroup(this.model.groupAt(position)), errors.onUnexpectedError);
 		}
 	}
 }
@@ -412,6 +413,7 @@ export class ActionProvider extends ContributableActionProvider {
 					result.unshift(this.instantiationService.createInstance(OpenToSideAction, tree, resource, false));
 
 					if (!openEditor.isUntitled()) {
+
 						// Files: Save / Revert
 						if (!autoSaveEnabled) {
 							result.push(new Separator());
@@ -426,18 +428,10 @@ export class ActionProvider extends ContributableActionProvider {
 							revertAction.enabled = openEditor.isDirty();
 							result.push(revertAction);
 						}
-
-						result.push(new Separator());
-
-						// Compare Actions
-						const runCompareAction = this.instantiationService.createInstance(CompareResourcesAction, resource, tree);
-						if (runCompareAction._isEnabled()) {
-							result.push(runCompareAction);
-						}
-						result.push(this.instantiationService.createInstance(SelectResourceForCompareAction, resource, tree));
 					}
+
 					// Untitled: Save / Save As
-					else {
+					if (openEditor.isUntitled()) {
 						result.push(new Separator());
 
 						if (this.untitledEditorService.hasAssociatedFilePath(resource)) {
@@ -450,6 +444,14 @@ export class ActionProvider extends ContributableActionProvider {
 						saveAsAction.setResource(resource);
 						result.push(saveAsAction);
 					}
+
+					// Compare Actions
+					result.push(new Separator());
+					const runCompareAction = this.instantiationService.createInstance(CompareResourcesAction, resource, tree);
+					if (runCompareAction._isEnabled()) {
+						result.push(runCompareAction);
+					}
+					result.push(this.instantiationService.createInstance(SelectResourceForCompareAction, resource, tree));
 
 					result.push(new Separator());
 				}

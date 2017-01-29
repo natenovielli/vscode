@@ -17,26 +17,25 @@ import { BaseEditor, IEditorInputActionContext } from 'vs/workbench/browser/part
 import { RunOnceScheduler } from 'vs/base/common/async';
 import { isCommonCodeEditor, isCommonDiffEditor } from 'vs/editor/common/editorCommon';
 import arrays = require('vs/base/common/arrays');
-import { IEditorStacksModel, IEditorGroup, IEditorIdentifier, EditorInput, IWorkbenchEditorConfiguration, IStacksModelChangeEvent, getResource } from 'vs/workbench/common/editor';
+import { IEditorStacksModel, IEditorGroup, IEditorIdentifier, EditorInput, IStacksModelChangeEvent, toResource } from 'vs/workbench/common/editor';
 import { EventType as BaseEventType } from 'vs/base/common/events';
 import { IActionItem, ActionsOrientation, Separator } from 'vs/base/browser/ui/actionbar/actionbar';
 import { ToolBar } from 'vs/base/browser/ui/toolbar/toolbar';
 import { IWorkbenchEditorService } from 'vs/workbench/services/editor/common/editorService';
 import { IContextMenuService } from 'vs/platform/contextview/browser/contextView';
-import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
-import { IEditorGroupService } from 'vs/workbench/services/group/common/groupService';
+import { IEditorGroupService, ITabOptions } from 'vs/workbench/services/group/common/groupService';
 import { IMessageService, Severity } from 'vs/platform/message/common/message';
 import { StandardMouseEvent } from 'vs/base/browser/mouseEvent';
 import { ITelemetryService } from 'vs/platform/telemetry/common/telemetry';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
-import { IQuickOpenService } from 'vs/workbench/services/quickopen/common/quickOpenService';
+import { IQuickOpenService } from 'vs/platform/quickOpen/common/quickOpen';
 import { IKeybindingService } from 'vs/platform/keybinding/common/keybinding';
-import { Keybinding } from 'vs/base/common/keybinding';
+import { Keybinding } from 'vs/base/common/keyCodes';
 import { IContextKeyService } from 'vs/platform/contextkey/common/contextkey';
 import { CloseEditorsInGroupAction, SplitEditorAction, CloseEditorAction, KeepEditorAction, CloseOtherEditorsInGroupAction, CloseRightEditorsInGroupAction, ShowEditorsInGroupAction } from 'vs/workbench/browser/parts/editor/editorActions';
 import { IDisposable, dispose } from 'vs/base/common/lifecycle';
 import { createActionItem, fillInActions } from 'vs/platform/actions/browser/menuItemActionItem';
-import { IMenuService, MenuId, IMenu } from 'vs/platform/actions/common/actions';
+import { IMenuService, MenuId, IMenu, ExecuteCommandAction } from 'vs/platform/actions/common/actions';
 import { ResourceContextKey } from 'vs/workbench/common/resourceContextKey';
 
 export interface IToolbarActions {
@@ -77,10 +76,7 @@ export abstract class TitleControl implements ITitleAreaControl {
 
 	private parent: HTMLElement;
 
-	private previewEditors: boolean;
-	private showTabs: boolean;
-	protected showTabCloseButton: boolean;
-
+	protected tabOptions: ITabOptions;
 	private currentPrimaryEditorActionIds: string[] = [];
 	private currentSecondaryEditorActionIds: string[] = [];
 	protected editorActionsToolbar: ToolBar;
@@ -97,7 +93,6 @@ export abstract class TitleControl implements ITitleAreaControl {
 	constructor(
 		@IContextMenuService protected contextMenuService: IContextMenuService,
 		@IInstantiationService protected instantiationService: IInstantiationService,
-		@IConfigurationService protected configurationService: IConfigurationService,
 		@IWorkbenchEditorService protected editorService: IWorkbenchEditorService,
 		@IEditorGroupService protected editorGroupService: IEditorGroupService,
 		@IContextKeyService protected contextKeyService: IContextKeyService,
@@ -111,7 +106,7 @@ export abstract class TitleControl implements ITitleAreaControl {
 		this.stacks = editorGroupService.getStacksModel();
 		this.mapActionsToEditors = Object.create(null);
 
-		this.onConfigurationUpdated(configurationService.getConfiguration<IWorkbenchEditorConfiguration>());
+		this.tabOptions = this.editorGroupService.getTabOptions();
 
 		this.scheduler = new RunOnceScheduler(() => this.onSchedule(), 0);
 		this.toDispose.push(this.scheduler);
@@ -142,7 +137,7 @@ export abstract class TitleControl implements ITitleAreaControl {
 	}
 
 	private registerListeners(): void {
-		this.toDispose.push(this.configurationService.onDidUpdateConfiguration(e => this.onConfigurationUpdated(e.config)));
+		this.toDispose.push(this.editorGroupService.onTabOptionsChanged(options => this.tabOptions = options));
 		this.toDispose.push(this.stacks.onModelChanged(e => this.onStacksChanged(e)));
 	}
 
@@ -150,12 +145,6 @@ export abstract class TitleControl implements ITitleAreaControl {
 		if (e.structural) {
 			this.updateSplitActionEnablement();
 		}
-	}
-
-	private onConfigurationUpdated(config: IWorkbenchEditorConfiguration): void {
-		this.previewEditors = config.workbench && config.workbench.editor && config.workbench.editor.enablePreview;
-		this.showTabs = config.workbench && config.workbench.editor && config.workbench.editor.showTabs;
-		this.showTabCloseButton = config.workbench && config.workbench.editor && config.workbench.editor.showTabCloseButton;
 	}
 
 	private updateSplitActionEnablement(): void {
@@ -301,7 +290,7 @@ export abstract class TitleControl implements ITitleAreaControl {
 		const position = this.stacks.positionOfGroup(group);
 
 		// Update the resource context
-		this.resourceContext.set(group && getResource(group.activeEditor));
+		this.resourceContext.set(group && toResource(group.activeEditor, { supportSideBySide: true }));
 
 		// Editor actions require the editor control to be there, so we retrieve it via service
 		const control = this.editorService.getVisibleEditors()[position];
@@ -383,7 +372,7 @@ export abstract class TitleControl implements ITitleAreaControl {
 			secondaryEditorActions = prepareActions(editorActions.secondary);
 		}
 
-		if (this.showTabs) {
+		if (this.tabOptions.showTabs) {
 			if (secondaryEditorActions.length > 0) {
 				secondaryEditorActions.push(new Separator());
 			}
@@ -393,16 +382,21 @@ export abstract class TitleControl implements ITitleAreaControl {
 		}
 
 		const primaryEditorActionIds = primaryEditorActions.map(a => a.id);
-		if (!this.showTabs) {
+		if (!this.tabOptions.showTabs) {
 			primaryEditorActionIds.push(this.closeEditorAction.id); // always show "Close" when tabs are disabled
 		}
 
 		const secondaryEditorActionIds = secondaryEditorActions.map(a => a.id);
 
-		if (!arrays.equals(primaryEditorActionIds, this.currentPrimaryEditorActionIds) || !arrays.equals(secondaryEditorActionIds, this.currentSecondaryEditorActionIds)) {
+		if (
+			!arrays.equals(primaryEditorActionIds, this.currentPrimaryEditorActionIds) ||
+			!arrays.equals(secondaryEditorActionIds, this.currentSecondaryEditorActionIds) ||
+			primaryEditorActions.some(action => action instanceof ExecuteCommandAction) || // execute command actions can have the same ID but different arguments
+			secondaryEditorActions.some(action => action instanceof ExecuteCommandAction)  // see also https://github.com/Microsoft/vscode/issues/16298
+		) {
 			this.editorActionsToolbar.setActions(primaryEditorActions, secondaryEditorActions)();
 
-			if (!this.showTabs) {
+			if (!this.tabOptions.showTabs) {
 				this.editorActionsToolbar.addPrimaryAction(this.closeEditorAction)();
 			}
 
@@ -422,7 +416,7 @@ export abstract class TitleControl implements ITitleAreaControl {
 
 		// Update the resource context
 		const currentContext = this.resourceContext.get();
-		this.resourceContext.set(identifier.editor && getResource(identifier.editor));
+		this.resourceContext.set(toResource(identifier.editor, { supportSideBySide: true }));
 
 		// Find target anchor
 		let anchor: HTMLElement | { x: number, y: number } = node;
@@ -469,13 +463,13 @@ export abstract class TitleControl implements ITitleAreaControl {
 			this.closeOtherEditorsAction
 		];
 
-		if (this.showTabs) {
+		if (this.tabOptions.showTabs) {
 			actions.push(this.closeRightEditorsAction);
 		}
 
 		actions.push(this.closeEditorsInGroupAction);
 
-		if (this.previewEditors) {
+		if (this.tabOptions.previewEditors) {
 			actions.push(new Separator(), this.pinEditorAction);
 		}
 

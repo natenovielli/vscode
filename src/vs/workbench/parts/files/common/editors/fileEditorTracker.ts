@@ -8,18 +8,16 @@ import { IWorkbenchContribution } from 'vs/workbench/common/contributions';
 import errors = require('vs/base/common/errors');
 import URI from 'vs/base/common/uri';
 import paths = require('vs/base/common/paths');
-import { DiffEditorInput } from 'vs/workbench/common/editor/diffEditorInput';
-import { IEditor } from 'vs/editor/common/editorCommon';
+import { IEditor, IEditorViewState, isCommonCodeEditor } from 'vs/editor/common/editorCommon';
 import { IEditor as IBaseEditor } from 'vs/platform/editor/common/editor';
-import { EditorInput, IEditorStacksModel } from 'vs/workbench/common/editor';
+import { toResource, EditorInput, IEditorStacksModel, SideBySideEditorInput, IEditorGroup } from 'vs/workbench/common/editor';
 import { BINARY_FILE_EDITOR_ID } from 'vs/workbench/parts/files/common/files';
-import { LocalFileChangeEvent, ITextFileService, ModelState } from 'vs/workbench/services/textfile/common/textfiles';
-import { FileChangeType, FileChangesEvent, EventType as CommonFileEventType } from 'vs/platform/files/common/files';
+import { ITextFileService, ModelState } from 'vs/workbench/services/textfile/common/textfiles';
+import { FileOperationEvent, FileOperation, IFileService, FileChangeType, FileChangesEvent } from 'vs/platform/files/common/files';
 import { FileEditorInput } from 'vs/workbench/parts/files/common/editors/fileEditorInput';
 import { IEditorGroupService } from 'vs/workbench/services/group/common/groupService';
 import { ILifecycleService } from 'vs/platform/lifecycle/common/lifecycle';
 import { IWorkbenchEditorService } from 'vs/workbench/services/editor/common/editorService';
-import { IEventService } from 'vs/platform/event/common/event';
 import { IDisposable, dispose } from 'vs/base/common/lifecycle';
 
 export class FileEditorTracker implements IWorkbenchContribution {
@@ -32,11 +30,11 @@ export class FileEditorTracker implements IWorkbenchContribution {
 	private toUnbind: IDisposable[];
 
 	constructor(
-		@IEventService private eventService: IEventService,
 		@IWorkbenchEditorService private editorService: IWorkbenchEditorService,
 		@ITextFileService private textFileService: ITextFileService,
 		@ILifecycleService private lifecycleService: ILifecycleService,
 		@IEditorGroupService private editorGroupService: IEditorGroupService,
+		@IFileService private fileService: IFileService
 	) {
 		this.toUnbind = [];
 		this.stacks = editorGroupService.getStacksModel();
@@ -50,34 +48,30 @@ export class FileEditorTracker implements IWorkbenchContribution {
 
 	private registerListeners(): void {
 
-		// Update editors from local changes and saves
-		this.toUnbind.push(this.eventService.addListener2('files.internal:fileChanged', (e: LocalFileChangeEvent) => this.onLocalFileChange(e)));
+		// Update editors from operation changes
+		this.toUnbind.push(this.fileService.onAfterOperation(e => this.onFileOperation(e)));
 
 		// Update editors from disk changes
-		this.toUnbind.push(this.eventService.addListener2(CommonFileEventType.FILE_CHANGES, (e: FileChangesEvent) => this.onFileChanges(e)));
+		this.toUnbind.push(this.fileService.onFileChanges(e => this.onFileChanges(e)));
 
 		// Lifecycle
 		this.lifecycleService.onShutdown(this.dispose, this);
 	}
 
 	// Note: there is some duplication with the other file event handler below. Since we cannot always rely on the disk events
-	// carrying all necessary data in all environments, we also use the local file events to make sure operations are handled.
+	// carrying all necessary data in all environments, we also use the file operation events to make sure operations are handled.
 	// In any case there is no guarantee if the local event is fired first or the disk one. Thus, code must handle the case
 	// that the event ordering is random as well as might not carry all information needed.
-	private onLocalFileChange(e: LocalFileChangeEvent): void {
-		const movedTo = e.gotMoved() && e.getAfter() && e.getAfter().resource;
+	private onFileOperation(e: FileOperationEvent): void {
 
 		// Handle moves specially when file is opened
-		if (movedTo) {
-			const before = e.getBefore();
-			const after = e.getAfter();
-
-			this.handleMovedFileInOpenedEditors(before ? before.resource : null, after ? after.resource : null);
+		if (e.operation === FileOperation.MOVE) {
+			this.handleMovedFileInOpenedEditors(e.resource, e.target.resource);
 		}
 
 		// Handle deletes
-		if (e.gotDeleted() || movedTo) {
-			this.handleDeletes(e.getBefore().resource, movedTo);
+		if (e.operation === FileOperation.DELETE || e.operation === FileOperation.MOVE) {
+			this.handleDeletes(e.resource, e.target ? e.target.resource : void 0);
 		}
 	}
 
@@ -127,16 +121,16 @@ export class FileEditorTracker implements IWorkbenchContribution {
 			group.getEditors().forEach(input => {
 				if (input instanceof FileEditorInput) {
 					inputs.push(input);
-				} else if (input instanceof DiffEditorInput) {
-					const originalInput = input.originalInput;
-					const modifiedInput = input.modifiedInput;
+				} else if (input instanceof SideBySideEditorInput) {
+					const master = input.master;
+					const details = input.details;
 
-					if (originalInput instanceof FileEditorInput) {
-						inputs.push(originalInput);
+					if (master instanceof FileEditorInput) {
+						inputs.push(master);
 					}
 
-					if (modifiedInput instanceof FileEditorInput) {
-						inputs.push(modifiedInput);
+					if (details instanceof FileEditorInput) {
+						inputs.push(details);
 					}
 				}
 			});
@@ -163,19 +157,48 @@ export class FileEditorTracker implements IWorkbenchContribution {
 						}
 
 						// Reopen
-						this.editorService.openEditor({ resource: reopenFileResource, options: { preserveFocus: true, pinned: group.isPinned(input), index: group.indexOf(input), inactive: !group.isActive(input) } }, stacks.positionOfGroup(group)).done(null, errors.onUnexpectedError);
+						this.editorService.openEditor({
+							resource: reopenFileResource,
+							options: {
+								preserveFocus: true,
+								pinned: group.isPinned(input),
+								index: group.indexOf(input),
+								inactive: !group.isActive(input),
+								viewState: this.getViewStateFor(oldResource, group)
+							}
+						}, stacks.positionOfGroup(group)).done(null, errors.onUnexpectedError);
 					}
 				}
 			});
 		});
 	}
 
+	private getViewStateFor(resource: URI, group: IEditorGroup): IEditorViewState {
+		const stacks = this.editorGroupService.getStacksModel();
+		const editors = this.editorService.getVisibleEditors();
+
+		for (let i = 0; i < editors.length; i++) {
+			const editor = editors[i];
+			if (editor && editor.position === stacks.positionOfGroup(group)) {
+				const resource = toResource(editor.input, { filter: 'file' });
+				if (resource && resource.fsPath === resource.fsPath) {
+					const control = editor.getControl();
+					if (isCommonCodeEditor(control)) {
+						return control.saveViewState();
+					}
+				}
+			}
+		}
+
+		return void 0;
+	}
+
 	private handleUpdatesToVisibleEditors(e: FileChangesEvent) {
 		const editors = this.editorService.getVisibleEditors();
 		editors.forEach(editor => {
 			let input = editor.input;
-			if (input instanceof DiffEditorInput) {
-				input = this.getMatchingFileEditorInputFromDiff(<DiffEditorInput>input, e);
+			if (input instanceof SideBySideEditorInput) {
+				input = this.getMatchingFileEditorInputFromSideBySide(<SideBySideEditorInput>input, e);
 			}
 
 			// File Editor Input
@@ -231,25 +254,25 @@ export class FileEditorTracker implements IWorkbenchContribution {
 			return false;
 		}
 
-		// Support diff editor input too
-		if (input instanceof DiffEditorInput) {
-			input = (<DiffEditorInput>input).modifiedInput;
+		// Support side by side editor input too
+		if (input instanceof SideBySideEditorInput) {
+			input = (<SideBySideEditorInput>input).master;
 		}
 
 		return input instanceof FileEditorInput && input.getResource().toString() === resource.toString();
 	}
 
-	private getMatchingFileEditorInputFromDiff(input: DiffEditorInput, e: FileChangesEvent): FileEditorInput {
+	private getMatchingFileEditorInputFromSideBySide(input: SideBySideEditorInput, e: FileChangesEvent): FileEditorInput {
 
-		// First try modifiedInput
-		const modifiedInput = input.modifiedInput;
-		const res = this.getMatchingFileEditorInputFromInput(modifiedInput, e);
+		// First try master
+		const master = input.master;
+		const res = this.getMatchingFileEditorInputFromInput(master, e);
 		if (res) {
 			return res;
 		}
 
-		// Second try originalInput
-		return this.getMatchingFileEditorInputFromInput(input.originalInput, e);
+		// Second try details
+		return this.getMatchingFileEditorInputFromInput(input.details, e);
 	}
 
 	private getMatchingFileEditorInputFromInput(input: EditorInput, e: FileChangesEvent): FileEditorInput {

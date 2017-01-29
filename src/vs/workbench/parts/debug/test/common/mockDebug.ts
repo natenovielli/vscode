@@ -6,8 +6,7 @@
 import uri from 'vs/base/common/uri';
 import Event from 'vs/base/common/event';
 import { TPromise } from 'vs/base/common/winjs.base';
-import debug = require('vs/workbench/parts/debug/common/debug');
-import { Source } from 'vs/workbench/parts/debug/common/debugSource';
+import * as debug from 'vs/workbench/parts/debug/common/debug';
 
 export class MockDebugService implements debug.IDebugService {
 	public _serviceBrand: any;
@@ -88,9 +87,7 @@ export class MockDebugService implements debug.IDebugService {
 		return null;
 	}
 
-	public openOrRevealSource(source: Source, lineNumber: number, preserveFocus: boolean, sideBySide: boolean): TPromise<any> {
-		return TPromise.as(null);
-	}
+	public deemphasizeSource(uri: uri): void { }
 }
 
 export class MockSession implements debug.ISession {
@@ -99,10 +96,6 @@ export class MockSession implements debug.ISession {
 
 	public getId() {
 		return 'mockrawsession';
-	}
-
-	public get requestType() {
-		return debug.SessionRequestType.LAUNCH;
 	}
 
 	public getLengthInSeconds(): number {

@@ -104,8 +104,9 @@ export class OpenEditorsView extends AdaptiveCollapsibleViewletView {
 			dnd
 		}, {
 				indentPixels: 0,
-				twistiePixels: 20,
-				ariaLabel: nls.localize({ key: 'treeAriaLabel', comment: ['Open is an adjective'] }, "Open Editors")
+				twistiePixels: 22,
+				ariaLabel: nls.localize({ key: 'treeAriaLabel', comment: ['Open is an adjective'] }, "Open Editors: List of Active Files"),
+				showTwistie: false
 			});
 
 		this.fullRefreshNeeded = true;
@@ -132,8 +133,12 @@ export class OpenEditorsView extends AdaptiveCollapsibleViewletView {
 		// Also handle configuration updates
 		this.toDispose.push(this.configurationService.onDidUpdateConfiguration(e => this.onConfigurationUpdated(e.config)));
 
-		// Also handle dirty count indicator #10556
-		this.toDispose.push(this.textFileService.models.onModelDirty(e => this.updateDirtyIndicator()));
+		// Handle dirty counter
+		this.toDispose.push(this.untitledEditorService.onDidChangeDirty(e => this.updateDirtyIndicator()));
+		this.toDispose.push(this.textFileService.models.onModelsDirty(e => this.updateDirtyIndicator()));
+		this.toDispose.push(this.textFileService.models.onModelsSaved(e => this.updateDirtyIndicator()));
+		this.toDispose.push(this.textFileService.models.onModelsSaveError(e => this.updateDirtyIndicator()));
+		this.toDispose.push(this.textFileService.models.onModelsReverted(e => this.updateDirtyIndicator()));
 
 		// We are not updating the tree while the viewlet is not visible. Thus refresh when viewlet becomes visible #6702
 		this.toDispose.push(this.viewletService.onDidViewletOpen(viewlet => {
@@ -162,7 +167,6 @@ export class OpenEditorsView extends AdaptiveCollapsibleViewletView {
 			this.structuralTreeRefreshScheduler.schedule(this.structuralRefreshDelay);
 		} else {
 			const toRefresh = e.editor ? new OpenEditor(e.editor, e.group) : e.group;
-			this.updateDirtyIndicator();
 			this.tree.refresh(toRefresh, false).done(() => this.highlightActiveEditor(), errors.onUnexpectedError);
 		}
 	}

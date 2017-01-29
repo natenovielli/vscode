@@ -58,6 +58,12 @@ export enum ConfigurationTarget {
 export interface IConfigurationValue {
 	key: string;
 	value: any;
+	overrideIdentifier?: string;
+}
+
+export interface IConfigurationEditingOptions {
+	writeToBuffer: boolean;
+	autoSave: boolean;
 }
 
 export interface IConfigurationEditingService {
@@ -68,5 +74,5 @@ export interface IConfigurationEditingService {
 	 * Allows to write to either the user or workspace configuration file. The returned promise will be
 	 * in error state in any of the error cases from [ConfigurationEditingErrorCode](#ConfigurationEditingErrorCode)
 	 */
-	writeConfiguration(target: ConfigurationTarget, value: IConfigurationValue): TPromise<void>;
+	writeConfiguration(target: ConfigurationTarget, value: IConfigurationValue, options?: IConfigurationEditingOptions): TPromise<void>;
 }

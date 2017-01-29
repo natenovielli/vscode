@@ -14,6 +14,15 @@ const electron = require('electron');
 const remote = electron.remote;
 const ipc = electron.ipcRenderer;
 
+
+process.lazyEnv = new Promise(function (resolve) {
+	ipc.once('vscode:acceptShellEnv', function (event, shellEnv) {
+		assign(process.env, shellEnv);
+		resolve(process.env);
+	});
+	ipc.send('vscode:fetchShellEnv', remote.getCurrentWindow().id);
+});
+
 function onError(error, enableDeveloperTools) {
 	if (enableDeveloperTools) {
 		remote.getCurrentWebContents().openDevTools();
@@ -153,10 +162,16 @@ function main() {
 	createScript(rootUrl + '/vs/loader.js', function () {
 		define('fs', ['original-fs'], function (originalFS) { return originalFS; }); // replace the patched electron fs with the original node fs for all AMD code
 
+		window.MonacoEnvironment = {};
+
+		const nodeCachedDataErrors = window.MonacoEnvironment.nodeCachedDataErrors = [];
 		require.config({
 			baseUrl: rootUrl,
 			'vs/nls': nlsConfig,
-			recordStats: !!configuration.performance
+			recordStats: !!configuration.performance,
+			nodeCachedDataDir: configuration.nodeCachedDataDir,
+			onNodeCachedDataError: function (err) { nodeCachedDataErrors.push(err) },
+			nodeModules: [/*BUILD->INSERT_NODE_MODULES*/]
 		});
 
 		if (nlsConfig.pseudo) {
@@ -166,14 +181,13 @@ function main() {
 		}
 
 		// Perf Counters
-		window.MonacoEnvironment = {};
 		const timers = window.MonacoEnvironment.timers = {
-			start: new Date(configuration.isInitialStartup ? configuration.perfStartTime : configuration.perfWindowLoadTime),
 			isInitialStartup: !!configuration.isInitialStartup,
 			hasAccessibilitySupport: !!configuration.accessibilitySupport,
-			perfStartTime: new Date(configuration.perfStartTime),
-			perfWindowLoadTime: new Date(configuration.perfWindowLoadTime),
-			perfBeforeLoadWorkbenchMain: new Date()
+			start: new Date(configuration.perfStartTime),
+			appReady: new Date(configuration.perfAppReady),
+			windowLoad: new Date(configuration.perfWindowLoadTime),
+			beforeLoadWorkbenchMain: new Date()
 		};
 
 		require([
@@ -181,15 +195,19 @@ function main() {
 			'vs/nls!vs/workbench/electron-browser/workbench.main',
 			'vs/css!vs/workbench/electron-browser/workbench.main'
 		], function () {
-			timers.perfAfterLoadWorkbenchMain = new Date();
+			timers.afterLoadWorkbenchMain = new Date();
 
-			require('vs/workbench/electron-browser/main')
-				.startup(configuration)
-				.done(function () {
-					unbind(); // since the workbench is running, unbind our developer related listeners and let the workbench handle them
-				}, function (error) {
-					onError(error, enableDeveloperTools);
-				});
+			process.lazyEnv.then(function () {
+
+				require('vs/workbench/electron-browser/main')
+					.startup(configuration)
+					.done(function () {
+						unbind(); // since the workbench is running, unbind our developer related listeners and let the workbench handle them
+					}, function (error) {
+						onError(error, enableDeveloperTools);
+					});
+			});
+
 		});
 	});
 }

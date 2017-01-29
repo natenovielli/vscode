@@ -16,7 +16,7 @@ import { EditorInput, EditorOptions, TextEditorOptions } from 'vs/workbench/comm
 import { StringEditorInput } from 'vs/workbench/common/editor/stringEditorInput';
 import { StringEditorModel } from 'vs/workbench/common/editor/stringEditorModel';
 import { FileEditorInput } from 'vs/workbench/parts/files/common/editors/fileEditorInput';
-import { workbenchInstantiationService } from 'vs/test/utils/servicesTestUtils';
+import { workbenchInstantiationService } from 'vs/workbench/test/workbenchTestServices';
 import { Viewlet, ViewletDescriptor } from 'vs/workbench/browser/viewlet';
 import { IPanel } from 'vs/workbench/common/panel';
 import { WorkbenchProgressService, ScopedService } from 'vs/workbench/services/progress/browser/progressService';
@@ -118,6 +118,18 @@ class TestViewletService implements IViewletService {
 
 	public dispose() {
 	}
+
+	public getDefaultViewletId(): string {
+		return 'workbench.view.explorer';
+	}
+
+	public getViewlet(id: string): ViewletDescriptor {
+		return null;
+	}
+
+	public getProgressIndicator(id: string) {
+		return null;
+	}
 }
 
 class TestPanelService implements IPanelService {
@@ -128,6 +140,10 @@ class TestPanelService implements IPanelService {
 
 	public openPanel(id: string, focus?: boolean): Promise {
 		return TPromise.as(null);
+	}
+
+	public getPanels(): any[] {
+		return [];
 	}
 
 	public getActivePanel(): IViewlet {

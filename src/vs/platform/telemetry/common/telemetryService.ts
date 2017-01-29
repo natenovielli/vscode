@@ -7,7 +7,8 @@
 
 import { localize } from 'vs/nls';
 import { escapeRegExpCharacters } from 'vs/base/common/strings';
-import { ITelemetryService, ITelemetryAppender, ITelemetryInfo, ITelemetryExperiments, defaultExperiments } from 'vs/platform/telemetry/common/telemetry';
+import { ITelemetryService, ITelemetryInfo, ITelemetryExperiments } from 'vs/platform/telemetry/common/telemetry';
+import { ITelemetryAppender, defaultExperiments } from 'vs/platform/telemetry/common/telemetryUtils';
 import { optional } from 'vs/platform/instantiation/common/instantiation';
 import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
 import { IConfigurationRegistry, Extensions } from 'vs/platform/configuration/common/configurationRegistry';
@@ -100,8 +101,8 @@ export class TelemetryService implements ITelemetryService {
 	}
 
 	publicLog(eventName: string, data?: any): TPromise<any> {
-		// don't send events when the user is optout unless the event is the opt{in|out} signal
-		if (!this._userOptIn && eventName !== 'optInStatus') {
+		// don't send events when the user is optout
+		if (!this._userOptIn) {
 			return TPromise.as(undefined);
 		}
 

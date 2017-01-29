@@ -14,11 +14,12 @@ import { RunOnceScheduler } from 'vs/base/common/async';
 import { IdGenerator } from 'vs/base/common/idGenerator';
 import { Range } from 'vs/editor/common/core/range';
 import { Selection } from 'vs/editor/common/core/selection';
+import { SnippetController } from 'vs/editor/contrib/snippet/common/snippetController';
 import { EndOfLine, TextEditorLineNumbersStyle } from 'vs/workbench/api/node/extHostTypes';
 
 export interface ITextEditorConfigurationUpdate {
-	tabSize?: number | string;
-	insertSpaces?: boolean | string;
+	tabSize?: number | 'auto';
+	insertSpaces?: boolean | 'auto';
 	cursorStyle?: EditorCommon.TextEditorCursorStyle;
 	lineNumbers?: TextEditorLineNumbersStyle;
 }
@@ -55,12 +56,16 @@ export interface IFocusTracker {
 export enum TextEditorRevealType {
 	Default = 0,
 	InCenter = 1,
-	InCenterIfOutsideViewport = 2
+	InCenterIfOutsideViewport = 2,
+	AtTop = 3
 }
 
-export interface IApplyEditsOptions {
+export interface IUndoStopOptions {
 	undoStopBefore: boolean;
 	undoStopAfter: boolean;
+}
+
+export interface IApplyEditsOptions extends IUndoStopOptions {
 	setEndOfLine: EndOfLine;
 }
 
@@ -209,18 +214,12 @@ export class MainThreadTextEditor {
 			let insertSpaces = creationOpts.insertSpaces;
 			let tabSize = creationOpts.tabSize;
 
-			if (newConfiguration.insertSpaces !== 'auto') {
-				if (typeof newConfiguration.insertSpaces !== 'undefined') {
-					insertSpaces = (newConfiguration.insertSpaces === 'false' ? false : Boolean(newConfiguration.insertSpaces));
-				}
+			if (newConfiguration.insertSpaces !== 'auto' && typeof newConfiguration.insertSpaces !== 'undefined') {
+				insertSpaces = newConfiguration.insertSpaces;
 			}
-			if (newConfiguration.tabSize !== 'auto') {
-				if (typeof newConfiguration.tabSize !== 'undefined') {
-					let parsedTabSize = parseInt(<string>newConfiguration.tabSize, 10);
-					if (!isNaN(parsedTabSize)) {
-						tabSize = parsedTabSize;
-					}
-				}
+
+			if (newConfiguration.tabSize !== 'auto' && typeof newConfiguration.tabSize !== 'undefined') {
+				tabSize = newConfiguration.tabSize;
 			}
 
 			this._model.detectIndentation(insertSpaces, tabSize);
@@ -229,13 +228,10 @@ export class MainThreadTextEditor {
 
 		let newOpts: EditorCommon.ITextModelUpdateOptions = {};
 		if (typeof newConfiguration.insertSpaces !== 'undefined') {
-			newOpts.insertSpaces = (newConfiguration.insertSpaces === 'false' ? false : Boolean(newConfiguration.insertSpaces));
+			newOpts.insertSpaces = newConfiguration.insertSpaces;
 		}
 		if (typeof newConfiguration.tabSize !== 'undefined') {
-			let parsedTabSize = parseInt(<string>newConfiguration.tabSize, 10);
-			if (!isNaN(parsedTabSize)) {
-				newOpts.tabSize = parsedTabSize;
-			}
+			newOpts.tabSize = newConfiguration.tabSize;
 		}
 		this._model.updateOptions(newOpts);
 	}
@@ -293,14 +289,22 @@ export class MainThreadTextEditor {
 			console.warn('revealRange on invisible editor');
 			return;
 		}
-		if (revealType === TextEditorRevealType.Default) {
-			this._codeEditor.revealRange(range);
-		} else if (revealType === TextEditorRevealType.InCenter) {
-			this._codeEditor.revealRangeInCenter(range);
-		} else if (revealType === TextEditorRevealType.InCenterIfOutsideViewport) {
-			this._codeEditor.revealRangeInCenterIfOutsideViewport(range);
-		} else {
-			console.warn('Unknown revealType');
+		switch (revealType) {
+			case TextEditorRevealType.Default:
+				this._codeEditor.revealRange(range);
+				break;
+			case TextEditorRevealType.InCenter:
+				this._codeEditor.revealRangeInCenter(range);
+				break;;
+			case TextEditorRevealType.InCenterIfOutsideViewport:
+				this._codeEditor.revealRangeInCenterIfOutsideViewport(range);
+				break;
+			case TextEditorRevealType.AtTop:
+				this._codeEditor.revealRangeAtTop(range);
+				break;
+			default:
+				console.warn('Unknown revealType');
+				break;
 		}
 	}
 
@@ -391,6 +395,30 @@ export class MainThreadTextEditor {
 
 		console.warn('applyEdits on invisible editor');
 		return false;
+	}
+
+	insertSnippet(template: string, ranges: EditorCommon.IRange[], opts: IUndoStopOptions) {
+
+		if (!this._codeEditor) {
+			return false;
+		}
+
+		const selections = ranges.map(r => new Selection(r.startLineNumber, r.startColumn, r.endLineNumber, r.endColumn));
+		this._codeEditor.setSelections(selections);
+		this._codeEditor.focus();
+
+		if (opts.undoStopBefore) {
+			this._codeEditor.pushUndoStop();
+		}
+
+		const snippetController = SnippetController.get(this._codeEditor);
+		snippetController.insertSnippet(template, 0, 0);
+
+		if (opts.undoStopAfter) {
+			this._codeEditor.pushUndoStop();
+		}
+
+		return true;
 	}
 }
 
@@ -588,7 +616,7 @@ export class MainThreadEditorsTracker {
 	}
 
 	private _findVisibleTextEditorIds(): string[] {
-		let result = [];
+		let result: string[] = [];
 		let modelUris = Object.keys(this._model2TextEditors);
 		for (let i = 0, len = modelUris.length; i < len; i++) {
 			let editors = this._model2TextEditors[modelUris[i]];

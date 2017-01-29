@@ -11,7 +11,7 @@ import { IConfigurationService, getConfigurationValue } from 'vs/platform/config
 import { ICommandService } from 'vs/platform/commands/common/commands';
 import { IConfigurationResolverService } from 'vs/workbench/services/configurationResolver/common/configurationResolver';
 import { ConfigurationResolverService } from 'vs/workbench/services/configurationResolver/node/configurationResolverService';
-import { TestEnvironmentService, TestEditorService, } from 'vs/test/utils/servicesTestUtils';
+import { TestEnvironmentService, TestEditorService, } from 'vs/workbench/test/workbenchTestServices';
 import { TestConfigurationService } from 'vs/platform/configuration/test/common/testConfigurationService';
 
 suite('Configuration Resolver Service', () => {
@@ -344,6 +344,8 @@ class MockCommandService implements ICommandService {
 
 	public _serviceBrand: any;
 	public callCount = 0;
+
+	onWillExecuteCommand = () => ({ dispose: () => { } });
 
 	public executeCommand<T>(commandId: string, ...args: any[]): TPromise<any> {
 		this.callCount++;

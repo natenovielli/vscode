@@ -3,13 +3,16 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { TPromise } from 'vs/base/common/winjs.base';
-import { createDecorator } from 'vs/platform/instantiation/common/instantiation';
-import { IRange } from 'vs/editor/common/editorCommon';
 import URI from 'vs/base/common/uri';
-import { IConfigurationValue } from 'vs/workbench/services/configuration/common/configurationEditing';
+import { TPromise } from 'vs/base/common/winjs.base';
+import { LinkedMap as Map } from 'vs/base/common/map';
+import { IRange } from 'vs/editor/common/editorCommon';
+import { createDecorator } from 'vs/platform/instantiation/common/instantiation';
+import { RawContextKey } from 'vs/platform/contextkey/common/contextkey';
+import { IEditor } from 'vs/platform/editor/common/editor';
 
 export interface ISettingsGroup {
+	id: string;
 	range: IRange;
 	title: string;
 	titleRange: IRange;
@@ -17,29 +20,42 @@ export interface ISettingsGroup {
 }
 
 export interface ISettingsSection {
-	descriptionRange?: IRange;
-	description?: string;
+	titleRange?: IRange;
+	title?: string;
 	settings: ISetting[];
 }
 
 export interface ISetting {
 	range: IRange;
 	key: string;
+	keyRange: IRange;
 	value: any;
 	valueRange: IRange;
-	description: string;
+	description: string[];
+	descriptionRanges: IRange[];
+	overrides?: ISetting[];
+	overrideOf?: ISetting;
 }
 
-export interface IPreferencesEditorModel {
+export interface IFilterResult {
+	filteredGroups: ISettingsGroup[];
+	allGroups: ISettingsGroup[];
+	matches: Map<string, IRange[]>;
+}
+
+export interface IPreferencesEditorModel<T> {
 	uri: URI;
 	content: string;
+	getPreference(key: string): T;
 }
 
-export interface ISettingsEditorModel extends IPreferencesEditorModel {
+export interface ISettingsEditorModel extends IPreferencesEditorModel<ISetting> {
 	settingsGroups: ISettingsGroup[];
+	groupsTerms: string[];
+	filterSettings(filter: string): IFilterResult;
 }
 
-export interface IKeybindingsEditorModel extends IPreferencesEditorModel {
+export interface IKeybindingsEditorModel<T> extends IPreferencesEditorModel<T> {
 }
 
 export const IPreferencesService = createDecorator<IPreferencesService>('preferencesService');
@@ -47,15 +63,23 @@ export const IPreferencesService = createDecorator<IPreferencesService>('prefere
 export interface IPreferencesService {
 	_serviceBrand: any;
 
-	getDefaultSettingsEditorModel(): TPromise<ISettingsEditorModel>;
-	getUserSettingsEditorModel(): TPromise<ISettingsEditorModel>;
-	getWorkspaceSettingsEditorModel(): TPromise<ISettingsEditorModel>;
-	getDefaultKeybindingsEditorModel(): TPromise<IKeybindingsEditorModel>;
+	defaultSettingsResource: URI;
+	userSettingsResource: URI;
+	workspaceSettingsResource: URI;
+	defaultKeybindingsResource: URI;
 
-	resolvePreferencesEditorModel(uri: URI): TPromise<IPreferencesEditorModel>;
+	createDefaultPreferencesEditorModel<T>(uri: URI): TPromise<IPreferencesEditorModel<T>>;
+	resolvePreferencesEditorModel<T>(uri: URI): TPromise<IPreferencesEditorModel<T>>;
 
-	openGlobalSettings(): TPromise<void>;
-	openWorkspaceSettings(): TPromise<void>;
+	openSettings(): TPromise<IEditor>;
+	switchSettings(): TPromise<void>;
+	openGlobalSettings(): TPromise<IEditor>;
+	openWorkspaceSettings(): TPromise<IEditor>;
 	openGlobalKeybindingSettings(): TPromise<void>;
-	copyConfiguration(configurationValue: IConfigurationValue): void;
+
+	configureSettingsForLanguage(language: string): void;
 }
+
+export const CONTEXT_DEFAULT_SETTINGS_EDITOR = new RawContextKey<boolean>('defaultSettingsEditor', false);
+export const DEFAULT_EDITOR_COMMAND_COLLAPSE_ALL = 'defaultSettingsEditor.action.collapseAllGroups';
+export const DEFAULT_EDITOR_COMMAND_FOCUS_SEARCH = 'defaultSettings.action.focusSearch';

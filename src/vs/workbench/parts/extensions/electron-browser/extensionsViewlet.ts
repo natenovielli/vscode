@@ -24,7 +24,7 @@ import { Viewlet } from 'vs/workbench/browser/viewlet';
 import { IViewlet } from 'vs/workbench/common/viewlet';
 import { IViewletService } from 'vs/workbench/services/viewlet/browser/viewlet';
 import { append, $, addStandardDisposableListener, EventType, addClass, removeClass, toggleClass } from 'vs/base/browser/dom';
-import { PagedModel, IPagedModel } from 'vs/base/common/paging';
+import { PagedModel, IPagedModel, mergePagers, IPager } from 'vs/base/common/paging';
 import { ITelemetryService } from 'vs/platform/telemetry/common/telemetry';
 import { PagedList } from 'vs/base/browser/ui/list/listPaging';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
@@ -32,7 +32,7 @@ import { Delegate, Renderer } from 'vs/workbench/parts/extensions/browser/extens
 import { IExtensionsWorkbenchService, IExtension, IExtensionsViewlet, VIEWLET_ID, ExtensionState } from '../common/extensions';
 import {
 	ShowRecommendedExtensionsAction, ShowWorkspaceRecommendedExtensionsAction, ShowRecommendedKeymapExtensionsAction, ShowPopularExtensionsAction, ShowInstalledExtensionsAction, ShowDisabledExtensionsAction,
-	ShowOutdatedExtensionsAction, ClearExtensionsInputAction, ChangeSortAction, UpdateAllAction
+	ShowOutdatedExtensionsAction, ClearExtensionsInputAction, ChangeSortAction, UpdateAllAction, CheckForUpdatesAction
 } from 'vs/workbench/parts/extensions/browser/extensionsActions';
 import { InstallVSIXAction } from 'vs/workbench/parts/extensions/electron-browser/extensionsActions';
 import { IExtensionManagementService, IExtensionGalleryService, IExtensionTipsService, SortBy, SortOrder, IQueryOptions, LocalExtensionType } from 'vs/platform/extensionManagement/common/extensionManagement';
@@ -44,8 +44,9 @@ import { IWorkbenchEditorService } from 'vs/workbench/services/editor/common/edi
 import { IEditorGroupService } from 'vs/workbench/services/group/common/groupService';
 import { IMessageService, CloseAction } from 'vs/platform/message/common/message';
 import Severity from 'vs/base/common/severity';
-import { IActivityService, ProgressBadge, NumberBadge } from 'vs/workbench/services/activity/common/activityService';
+import { IActivityBarService, ProgressBadge, NumberBadge } from 'vs/workbench/services/activity/common/activityBarService';
 import { IExtensionService } from 'vs/platform/extensions/common/extensions';
+import { IModeService } from 'vs/editor/common/services/modeService';
 
 interface SearchInputEvent extends Event {
 	target: HTMLInputElement;
@@ -77,7 +78,8 @@ export class ExtensionsViewlet extends Viewlet implements IExtensionsViewlet {
 		@IExtensionTipsService private tipsService: IExtensionTipsService,
 		@IMessageService private messageService: IMessageService,
 		@IViewletService private viewletService: IViewletService,
-		@IExtensionService private extensionService: IExtensionService
+		@IExtensionService private extensionService: IExtensionService,
+		@IModeService private modeService: IModeService
 	) {
 		super(VIEWLET_ID, telemetryService);
 		this.searchDelayer = new ThrottledDelayer(500);
@@ -102,9 +104,12 @@ export class ExtensionsViewlet extends Viewlet implements IExtensionsViewlet {
 
 		const delegate = new Delegate();
 		const renderer = this.instantiationService.createInstance(Renderer);
-		this.list = new PagedList(this.extensionsBox, delegate, [renderer]);
+		this.list = new PagedList(this.extensionsBox, delegate, [renderer], {
+			ariaLabel: localize('extensions', "Extensions")
+		});
 
 		const onKeyDown = chain(domEvent(this.searchBox, 'keydown'))
+			.filter(() => this.list.length > 0)
 			.map(e => new StandardKeyboardEvent(e));
 
 		onKeyDown.filter(e => e.keyCode === KeyCode.Enter).on(this.onEnter, this, this.disposables);
@@ -179,6 +184,7 @@ export class ExtensionsViewlet extends Viewlet implements IExtensionsViewlet {
 				this.instantiationService.createInstance(ChangeSortAction, 'extensions.sort..asc', localize('ascending', "Sort Order: ↑"), this.onSearchChange, undefined, 'asc'),
 				this.instantiationService.createInstance(ChangeSortAction, 'extensions.sort..desc', localize('descending', "Sort Order: ↓"), this.onSearchChange, undefined, 'desc'),
 				new Separator(),
+				this.instantiationService.createInstance(CheckForUpdatesAction, CheckForUpdatesAction.ID, CheckForUpdatesAction.LABEL),
 				this.instantiationService.createInstance(UpdateAllAction, UpdateAllAction.ID, UpdateAllAction.LABEL),
 				this.instantiationService.createInstance(InstallVSIXAction, InstallVSIXAction.ID, InstallVSIXAction.LABEL)
 			];
@@ -270,16 +276,47 @@ export class ExtensionsViewlet extends Viewlet implements IExtensionsViewlet {
 			return this.getRecommendationsModel(query, options);
 		}
 
-		const text = value = query.value
-			.replace(/\bext:([^\s]+)\b/g, 'tag:"__ext_$1"')
-			.substr(0, 200);
+		const pagers: TPromise<IPager<IExtension>>[] = [];
+		let text = query.value;
+		const extensionRegex = /\bext:([^\s]+)\b/g;
 
-		if (text) {
-			options = assign(options, { text });
+		if (extensionRegex.test(query.value)) {
+			let names: string[] = [];
+
+			text = query.value.replace(extensionRegex, (m, ext) => {
+				names.push(...this.tipsService.getRecommendationsForExtension(ext));
+
+				// Get curated keywords
+				const keywords = this.tipsService.getKeywordsForExtension(ext);
+
+				// Get mode name
+				const modeId = this.modeService.getModeIdByFilenameOrFirstLine(`.${ext}`);
+				const languageName = modeId && this.modeService.getLanguageName(modeId);
+				const languageTag = languageName ? ` tag:"${languageName}"` : '';
+
+				// Construct a rich query
+				return `tag:"__ext_${ext}"${keywords.map(tag => ` tag:${tag}`)}${languageTag}`;
+			});
+
+			console.log(text);
+			console.log(names);
+
+			if (names.length) {
+				const namesOptions = assign({}, options, { names });
+				pagers.push(this.extensionsWorkbenchService.queryGallery(namesOptions));
+			}
 		}
 
-		return this.extensionsWorkbenchService.queryGallery(options)
-			.then(result => new PagedModel(result));
+		if (text) {
+			options = assign(options, { text: text.substr(0, 350) });
+		}
+
+		pagers.push(this.extensionsWorkbenchService.queryGallery(options));
+
+		return TPromise.join(pagers).then(pagers => {
+			const pager = pagers.length === 2 ? mergePagers(pagers[0], pagers[1]) : pagers[0];
+			return new PagedModel(pager);
+		});
 	}
 
 	private getRecommendationsModel(query: Query, options: IQueryOptions): TPromise<IPagedModel<IExtension>> {
@@ -338,7 +375,7 @@ export class ExtensionsViewlet extends Viewlet implements IExtensionsViewlet {
 	}
 
 	private onEnter(): void {
-		this.list.setSelection(...this.list.getFocus());
+		this.list.setSelection(this.list.getFocus());
 	}
 
 	private onEscape(): void {
@@ -419,9 +456,10 @@ export class ExtensionsViewlet extends Viewlet implements IExtensionsViewlet {
 export class StatusUpdater implements IWorkbenchContribution {
 
 	private disposables: IDisposable[];
+	private badgeHandle: IDisposable;
 
 	constructor(
-		@IActivityService private activityService: IActivityService,
+		@IActivityBarService private activityBarService: IActivityBarService,
 		@IExtensionsWorkbenchService private extensionsWorkbenchService: IExtensionsWorkbenchService
 	) {
 		extensionsWorkbenchService.onChange(this.onServiceChange, this, this.disposables);
@@ -432,21 +470,23 @@ export class StatusUpdater implements IWorkbenchContribution {
 	}
 
 	private onServiceChange(): void {
+
+		dispose(this.badgeHandle);
+
 		if (this.extensionsWorkbenchService.local.some(e => e.state === ExtensionState.Installing)) {
-			this.activityService.showActivity(VIEWLET_ID, new ProgressBadge(() => localize('extensions', 'Extensions')), 'extensions-badge progress-badge');
+			this.badgeHandle = this.activityBarService.showActivity(VIEWLET_ID, new ProgressBadge(() => localize('extensions', "Extensions")), 'extensions-badge progress-badge');
 			return;
 		}
 
 		const outdated = this.extensionsWorkbenchService.local.reduce((r, e) => r + (e.outdated ? 1 : 0), 0);
 		if (outdated > 0) {
 			const badge = new NumberBadge(outdated, n => localize('outdatedExtensions', '{0} Outdated Extensions', n));
-			this.activityService.showActivity(VIEWLET_ID, badge, 'extensions-badge count-badge');
-		} else {
-			this.activityService.showActivity(VIEWLET_ID, null, 'extensions-badge');
+			this.badgeHandle = this.activityBarService.showActivity(VIEWLET_ID, badge, 'extensions-badge count-badge');
 		}
 	}
 
 	dispose(): void {
 		this.disposables = dispose(this.disposables);
+		dispose(this.badgeHandle);
 	}
 }

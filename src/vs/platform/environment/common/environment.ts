@@ -14,6 +14,7 @@ export interface ParsedArgs {
 	diff?: boolean;
 	goto?: boolean;
 	'new-window'?: boolean;
+	'new-window-if-not-first'?: boolean;
 	'reuse-window'?: boolean;
 	locale?: string;
 	'user-data-dir'?: string;
@@ -47,6 +48,8 @@ export interface IEnvironmentService {
 	userProductHome: string;
 	userDataPath: string;
 
+	appNameLong: string;
+	appQuality: string;
 	appSettingsHome: string;
 	appSettingsPath: string;
 	appKeybindingsPath: string;
@@ -71,4 +74,6 @@ export interface IEnvironmentService {
 
 	mainIPCHandle: string;
 	sharedIPCHandle: string;
+
+	nodeCachedDataDir: string;
 }

@@ -8,6 +8,7 @@
 import * as path from 'path';
 import * as platform from 'vs/base/common/platform';
 import * as objects from 'vs/base/common/objects';
+import nls = require('vs/nls');
 import { IStorageService } from 'vs/code/electron-main/storage';
 import { shell, screen, BrowserWindow, systemPreferences, app } from 'electron';
 import { TPromise, TValueCallback } from 'vs/base/common/winjs.base';
@@ -15,9 +16,10 @@ import { IEnvironmentService, ParsedArgs } from 'vs/platform/environment/common/
 import { ILogService } from 'vs/code/electron-main/log';
 import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
 import { parseArgs } from 'vs/platform/environment/node/argv';
-import product from 'vs/platform/product';
+import product from 'vs/platform/node/product';
 import { getCommonHTTPHeaders } from 'vs/platform/environment/node/http';
-import { IWindowSettings } from 'vs/platform/windows/common/windows';
+import { IWindowSettings, MenuBarVisibility } from 'vs/platform/windows/common/windows';
+import { IDisposable, dispose } from 'vs/base/common/lifecycle';
 
 export interface IWindowState {
 	width?: number;
@@ -30,6 +32,7 @@ export interface IWindowState {
 export interface IWindowCreationOptions {
 	state: IWindowState;
 	extensionDevelopmentPath?: string;
+	isExtensionTestHost?: boolean;
 	allowFullscreen?: boolean;
 	titleBarStyle?: 'native' | 'custom';
 }
@@ -45,7 +48,7 @@ export const defaultWindowState = function (mode = WindowMode.Normal): IWindowSt
 	return {
 		width: 1024,
 		height: 768,
-		mode: mode
+		mode
 	};
 };
 
@@ -81,6 +84,7 @@ export interface IWindowConfiguration extends ParsedArgs {
 	isInitialStartup?: boolean;
 
 	perfStartTime?: number;
+	perfAppReady?: number;
 	perfWindowLoadTime?: number;
 
 	workspacePath?: string;
@@ -88,6 +92,8 @@ export interface IWindowConfiguration extends ParsedArgs {
 	filesToOpen?: IPath[];
 	filesToCreate?: IPath[];
 	filesToDiff?: IPath[];
+
+	nodeCachedDataDir: string;
 }
 
 export enum ReadyState {
@@ -113,6 +119,12 @@ export enum ReadyState {
 	READY
 }
 
+interface IConfiguration {
+	window: {
+		menuBarVisibility: MenuBarVisibility;
+	};
+}
+
 export interface IVSCodeWindow {
 	id: number;
 	readyState: ReadyState;
@@ -123,7 +135,6 @@ export interface IVSCodeWindow {
 
 export class VSCodeWindow implements IVSCodeWindow {
 
-	public static menuBarHiddenKey = 'menuBarHidden';
 	public static colorThemeStorageKey = 'theme';
 
 	private static MIN_WIDTH = 200;
@@ -137,8 +148,11 @@ export class VSCodeWindow implements IVSCodeWindow {
 	private _lastFocusTime: number;
 	private _readyState: ReadyState;
 	private _extensionDevelopmentPath: string;
+	private _isExtensionTestHost: boolean;
 	private windowState: IWindowState;
+	private currentMenuBarVisibility: MenuBarVisibility;
 	private currentWindowMode: WindowMode;
+	private toDispose: IDisposable[];
 
 	private whenReadyCallbacks: TValueCallback<VSCodeWindow>[];
 
@@ -156,7 +170,9 @@ export class VSCodeWindow implements IVSCodeWindow {
 		this._lastFocusTime = -1;
 		this._readyState = ReadyState.NONE;
 		this._extensionDevelopmentPath = config.extensionDevelopmentPath;
+		this._isExtensionTestHost = config.isExtensionTestHost;
 		this.whenReadyCallbacks = [];
+		this.toDispose = [];
 
 		// Load window state
 		this.restoreWindowState(config.state);
@@ -200,21 +216,6 @@ export class VSCodeWindow implements IVSCodeWindow {
 		this._win = new BrowserWindow(options);
 		this._id = this._win.id;
 
-		// TODO@joao: hook this up to some initialization routine
-		// this causes a race between setting the headers and doing
-		// a request that needs them. chances are low
-		getCommonHTTPHeaders().done(headers => {
-			if (!this._win) {
-				return;
-			}
-
-			const urls = ['https://marketplace.visualstudio.com/*', 'https://*.vsassets.io/*'];
-
-			this._win.webContents.session.webRequest.onBeforeSendHeaders({ urls }, (details, cb) => {
-				cb({ cancel: false, requestHeaders: objects.assign(details.requestHeaders, headers) });
-			});
-		});
-
 		if (isFullscreenOrMaximized) {
 			this.win.maximize();
 
@@ -229,19 +230,41 @@ export class VSCodeWindow implements IVSCodeWindow {
 
 		this._lastFocusTime = Date.now(); // since we show directly, we need to set the last focus time too
 
-		if (this.storageService.getItem<boolean>(VSCodeWindow.menuBarHiddenKey, false)) {
-			this.setMenuBarVisibility(false); // respect configured menu bar visibility
-		}
+		// respect configured menu bar visibility
+		this.onConfigurationUpdated(this.configurationService.getConfiguration<IConfiguration>());
 
+		// TODO@joao: hook this up to some initialization routine this causes a race between setting the headers and doing
+		// a request that needs them. chances are low
+		this.setCommonHTTPHeaders();
+
+		// Eventing
 		this.registerListeners();
+	}
+
+	private setCommonHTTPHeaders(): void {
+		getCommonHTTPHeaders().done(headers => {
+			if (!this._win) {
+				return;
+			}
+
+			const urls = ['https://marketplace.visualstudio.com/*', 'https://*.vsassets.io/*'];
+
+			this._win.webContents.session.webRequest.onBeforeSendHeaders({ urls }, (details, cb) => {
+				cb({ cancel: false, requestHeaders: objects.assign(details.requestHeaders, headers) });
+			});
+		});
 	}
 
 	public hasHiddenTitleBarStyle(): boolean {
 		return this.hiddenTitleBarStyle;
 	}
 
-	public get isPluginDevelopmentHost(): boolean {
+	public get isExtensionDevelopmentHost(): boolean {
 		return !!this._extensionDevelopmentPath;
+	}
+
+	public get isExtensionTestHost(): boolean {
+		return this._isExtensionTestHost;
 	}
 
 	public get extensionDevelopmentPath(): string {
@@ -393,7 +416,18 @@ export class VSCodeWindow implements IVSCodeWindow {
 				}
 			});
 		}
+
+		// Handle configuration changes
+		this.toDispose.push(this.configurationService.onDidUpdateConfiguration(e => this.onConfigurationUpdated(e.config)));
 	}
+
+	private onConfigurationUpdated(config: IConfiguration): void {
+		const newMenuBarVisibility = this.getMenuBarVisibility(config);
+		if (newMenuBarVisibility !== this.currentMenuBarVisibility) {
+			this.currentMenuBarVisibility = newMenuBarVisibility;
+			this.setMenuBarVisibility(newMenuBarVisibility);
+		}
+	};
 
 	public load(config: IWindowConfiguration): void {
 
@@ -441,8 +475,8 @@ export class VSCodeWindow implements IVSCodeWindow {
 		delete configuration.filesToDiff;
 
 		// Some configuration things get inherited if the window is being reloaded and we are
-		// in plugin development mode. These options are all development related.
-		if (this.isPluginDevelopmentHost && cli) {
+		// in extension development mode. These options are all development related.
+		if (this.isExtensionDevelopmentHost && cli) {
 			configuration.verbose = cli.verbose;
 			configuration.debugPluginHost = cli.debugPluginHost;
 			configuration.debugBrkPluginHost = cli.debugBrkPluginHost;
@@ -469,11 +503,12 @@ export class VSCodeWindow implements IVSCodeWindow {
 		windowConfiguration.fullscreen = this._win.isFullScreen();
 
 		// Set Accessibility Config
-		windowConfiguration.highContrast = platform.isWindows && systemPreferences.isInvertedColorScheme();
+		windowConfiguration.highContrast = platform.isWindows && systemPreferences.isInvertedColorScheme() && (!windowConfig || windowConfig.autoDetectHighContrast);
 		windowConfiguration.accessibilitySupport = app.isAccessibilitySupportEnabled();
 
 		// Perf Counters
 		windowConfiguration.perfStartTime = global.perfStartTime;
+		windowConfiguration.perfAppReady = global.perfAppReady;
 		windowConfiguration.perfWindowLoadTime = Date.now();
 
 		// Config (combination of process.argv and window configuration)
@@ -641,21 +676,60 @@ export class VSCodeWindow implements IVSCodeWindow {
 	public toggleFullScreen(): void {
 		const willBeFullScreen = !this.win.isFullScreen();
 
+		// set fullscreen flag on window
 		this.win.setFullScreen(willBeFullScreen);
 
-		// Windows & Linux: Hide the menu bar but still allow to bring it up by pressing the Alt key
-		if (platform.isWindows || platform.isLinux) {
-			if (willBeFullScreen) {
-				this.setMenuBarVisibility(false);
-			} else {
-				this.setMenuBarVisibility(!this.storageService.getItem<boolean>(VSCodeWindow.menuBarHiddenKey, false)); // restore as configured
-			}
-		}
+		// respect configured menu bar visibility or default to toggle if not set
+		this.setMenuBarVisibility(this.currentMenuBarVisibility, false);
 	}
 
-	public setMenuBarVisibility(visible: boolean): void {
-		this.win.setMenuBarVisibility(visible);
-		this.win.setAutoHideMenuBar(!visible);
+	private getMenuBarVisibility(configuration: IConfiguration): MenuBarVisibility {
+		const windowConfig = this.configurationService.getConfiguration<IWindowSettings>('window');
+
+		if (!windowConfig || !windowConfig.menuBarVisibility) {
+			return 'default';
+		}
+
+		let menuBarVisibility = windowConfig.menuBarVisibility;
+		if (['visible', 'toggle', 'hidden'].indexOf(menuBarVisibility) < 0) {
+			menuBarVisibility = 'default';
+		}
+
+		return menuBarVisibility;
+	}
+
+	public setMenuBarVisibility(visibility: MenuBarVisibility, notify: boolean = true): void {
+		if (platform.isMacintosh) {
+			return; // ignore for macOS platform
+		}
+
+		const isFullscreen = this.win.isFullScreen();
+
+		switch (visibility) {
+			case ('default'):
+				this.win.setMenuBarVisibility(!isFullscreen);
+				this.win.setAutoHideMenuBar(isFullscreen);
+				break;
+
+			case ('visible'):
+				this.win.setMenuBarVisibility(true);
+				this.win.setAutoHideMenuBar(false);
+				break;
+
+			case ('toggle'):
+				this.win.setMenuBarVisibility(false);
+				this.win.setAutoHideMenuBar(true);
+
+				if (notify) {
+					this.send('vscode:showInfoMessage', nls.localize('hiddenMenuBar', "You can still access the menu bar by pressing the **Alt** key."));
+				};
+				break;
+
+			case ('hidden'):
+				this.win.setMenuBarVisibility(false);
+				this.win.setAutoHideMenuBar(false);
+				break;
+		};
 	}
 
 	public sendWhenReady(channel: string, ...args: any[]): void {
@@ -672,6 +746,8 @@ export class VSCodeWindow implements IVSCodeWindow {
 		if (this.showTimeoutHandle) {
 			clearTimeout(this.showTimeoutHandle);
 		}
+
+		this.toDispose = dispose(this.toDispose);
 
 		this._win = null; // Important to dereference the window object to allow for GC
 	}

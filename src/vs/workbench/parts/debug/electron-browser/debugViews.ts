@@ -23,6 +23,7 @@ import * as viewer from 'vs/workbench/parts/debug/electron-browser/debugViewer';
 import { AddWatchExpressionAction, RemoveAllWatchExpressionsAction, AddFunctionBreakpointAction, ToggleBreakpointsActivatedAction, RemoveAllBreakpointsAction } from 'vs/workbench/parts/debug/browser/debugActions';
 import { IContextMenuService } from 'vs/platform/contextview/browser/contextView';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
+import { MenuId } from 'vs/platform/actions/common/actions';
 import { ITelemetryService } from 'vs/platform/telemetry/common/telemetry';
 import { IMessageService } from 'vs/platform/message/common/message';
 import { IKeybindingService } from 'vs/platform/keybinding/common/keybinding';
@@ -86,7 +87,7 @@ export class VariablesView extends CollapsibleViewletView {
 			dataSource: new viewer.VariablesDataSource(),
 			renderer: this.instantiationService.createInstance(viewer.VariablesRenderer),
 			accessibilityProvider: new viewer.VariablesAccessibilityProvider(),
-			controller: new viewer.VariablesController(this.debugService, this.contextMenuService, new viewer.VariablesActionProvider(this.instantiationService))
+			controller: this.instantiationService.createInstance(viewer.VariablesController, new viewer.VariablesActionProvider(this.instantiationService), MenuId.DebugVariablesContext)
 		}, {
 				ariaLabel: nls.localize('variablesAriaTreeLabel', "Debug Variables"),
 				twistiePixels
@@ -182,7 +183,7 @@ export class WatchExpressionsView extends CollapsibleViewletView {
 			dataSource: new viewer.WatchExpressionsDataSource(),
 			renderer: this.instantiationService.createInstance(viewer.WatchExpressionsRenderer, actionProvider, this.actionRunner),
 			accessibilityProvider: new viewer.WatchExpressionsAccessibilityProvider(),
-			controller: new viewer.WatchExpressionsController(this.debugService, this.contextMenuService, actionProvider),
+			controller: this.instantiationService.createInstance(viewer.WatchExpressionsController, actionProvider, MenuId.DebugWatchContext),
 			dnd: this.instantiationService.createInstance(viewer.WatchExpressionsDragAndDrop)
 		}, {
 				ariaLabel: nls.localize({ comment: ['Debug is a noun in this context, not a verb.'], key: 'watchAriaTreeLabel' }, "Debug Watch Expressions"),
@@ -267,18 +268,8 @@ export class CallStackView extends CollapsibleViewletView {
 				this.pauseMessage.hide();
 			}
 
-			(this.tree.getInput() === newTreeInput ? this.tree.refresh() : this.tree.setInput(newTreeInput)).done(() => {
-				const stackFrame = this.debugService.getViewModel().focusedStackFrame;
-				if (!stackFrame) {
-					return;
-				}
-
-				const thread = stackFrame.thread;
-				return this.tree.expandAll([thread.process, thread]).done(() => {
-					this.tree.setSelection([stackFrame]);
-					return this.tree.reveal(stackFrame);
-				});
-			}, errors.onUnexpectedError);
+			(this.tree.getInput() === newTreeInput ? this.tree.refresh() : this.tree.setInput(newTreeInput))
+				.done(() => this.updateTreeSelection(), errors.onUnexpectedError);
 		}, 50);
 	}
 
@@ -301,7 +292,7 @@ export class CallStackView extends CollapsibleViewletView {
 			dataSource: this.instantiationService.createInstance(viewer.CallStackDataSource),
 			renderer: this.instantiationService.createInstance(viewer.CallStackRenderer),
 			accessibilityProvider: this.instantiationService.createInstance(viewer.CallstackAccessibilityProvider),
-			controller: new viewer.CallStackController(this.debugService, this.contextMenuService, actionProvider)
+			controller: this.instantiationService.createInstance(viewer.CallStackController, actionProvider, MenuId.DebugCallStackContext)
 		}, {
 				ariaLabel: nls.localize({ comment: ['Debug is a noun in this context, not a verb.'], key: 'callStackAriaLabel' }, "Debug Call Stack"),
 				twistiePixels
@@ -312,11 +303,38 @@ export class CallStackView extends CollapsibleViewletView {
 				this.onCallStackChangeScheduler.schedule();
 			}
 		}));
+		this.toDispose.push(this.debugService.getViewModel().onDidFocusStackFrame(() =>
+			this.updateTreeSelection().done(undefined, errors.onUnexpectedError)));
 
 		// Schedule the update of the call stack tree if the viewlet is opened after a session started #14684
 		if (this.debugService.state === State.Stopped) {
 			this.onCallStackChangeScheduler.schedule();
 		}
+	}
+
+	private updateTreeSelection(): TPromise<void> {
+		if (!this.tree.getInput()) {
+			// Tree not initialitized yet
+			return TPromise.as(null);
+		}
+
+		const stackFrame = this.debugService.getViewModel().focusedStackFrame;
+		const process = this.debugService.getViewModel().focusedProcess;
+		if (!stackFrame) {
+			if (!process) {
+				this.tree.clearSelection();
+				return TPromise.as(null);
+			}
+
+			this.tree.setSelection([process]);
+			return this.tree.reveal(process);
+		}
+
+		const thread = stackFrame.thread;
+		return this.tree.expandAll([thread.process, thread]).then(() => {
+			this.tree.setSelection([stackFrame]);
+			return this.tree.reveal(stackFrame);
+		});
 	}
 
 	public shutdown(): void {
@@ -355,13 +373,13 @@ export class BreakpointsView extends AdaptiveCollapsibleViewletView {
 	public renderBody(container: HTMLElement): void {
 		dom.addClass(container, 'debug-breakpoints');
 		this.treeContainer = renderViewTree(container);
-		const actionProvider = new viewer.BreakpointsActionProvider(this.instantiationService);
+		const actionProvider = new viewer.BreakpointsActionProvider(this.instantiationService, this.debugService);
 
 		this.tree = new Tree(this.treeContainer, {
 			dataSource: new viewer.BreakpointsDataSource(),
 			renderer: this.instantiationService.createInstance(viewer.BreakpointsRenderer, actionProvider, this.actionRunner),
 			accessibilityProvider: this.instantiationService.createInstance(viewer.BreakpointsAccessibilityProvider),
-			controller: new viewer.BreakpointsController(this.debugService, this.contextMenuService, actionProvider),
+			controller: this.instantiationService.createInstance(viewer.BreakpointsController, actionProvider, MenuId.DebugBreakpointsContext),
 			sorter: {
 				compare(tree: ITree, element: any, otherElement: any): number {
 					const first = <IBreakpoint>element;

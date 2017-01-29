@@ -57,7 +57,7 @@ export class KillTerminalAction extends Action {
 
 /**
  * Copies the terminal selection. Note that since the command palette takes focus from the terminal,
- * this can only be triggered via a keybinding.
+ * this cannot be triggered through the command palette.
  */
 export class CopyTerminalSelectionAction extends Action {
 
@@ -198,15 +198,17 @@ export class RunSelectedTextInTerminalAction extends Action {
 			terminalInstance = this.terminalService.createInstance();
 		}
 		let editor = this.codeEditorService.getFocusedCodeEditor();
-		let selection = editor.getSelection();
-		let text: string;
-		if (selection.isEmpty()) {
-			text = editor.getValue();
-		} else {
-			let endOfLinePreference = os.EOL === '\n' ? EndOfLinePreference.LF : EndOfLinePreference.CRLF;
-			text = editor.getModel().getValueInRange(selection, endOfLinePreference);
+		if (editor) {
+			let selection = editor.getSelection();
+			let text: string;
+			if (selection.isEmpty()) {
+				text = editor.getValue();
+			} else {
+				let endOfLinePreference = os.EOL === '\n' ? EndOfLinePreference.LF : EndOfLinePreference.CRLF;
+				text = editor.getModel().getValueInRange(selection, endOfLinePreference);
+			}
+			terminalInstance.sendText(text, true);
 		}
-		terminalInstance.sendText(text, true);
 		return TPromise.as(void 0);
 	}
 }
@@ -225,7 +227,7 @@ export class SwitchTerminalInstanceAction extends Action {
 	}
 
 	public run(item?: string): TPromise<any> {
-		if (!item) {
+		if (!item || !item.split) {
 			return TPromise.as(null);
 		}
 		const selectedTerminalIndex = parseInt(item.split(':')[0], 10) - 1;

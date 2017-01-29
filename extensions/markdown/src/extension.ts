@@ -8,6 +8,9 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import TelemetryReporter from 'vscode-extension-telemetry';
+import { MarkdownEngine } from './markdownEngine';
+import DocumentLinkProvider from './documentLinkProvider';
+import MDDocumentSymbolProvider from './documentSymbolProvider';
 
 interface IPackageInfo {
 	name: string;
@@ -15,45 +18,88 @@ interface IPackageInfo {
 	aiKey: string;
 }
 
-var telemetryReporter: TelemetryReporter;
+var telemetryReporter: TelemetryReporter | null;
 
 export function activate(context: vscode.ExtensionContext) {
-
-	let packageInfo = getPackageInfo(context);
+	const packageInfo = getPackageInfo();
 	telemetryReporter = packageInfo && new TelemetryReporter(packageInfo.name, packageInfo.version, packageInfo.aiKey);
 
-	let provider = new MDDocumentContentProvider(context);
-	let registration = vscode.workspace.registerTextDocumentContentProvider('markdown', provider);
+	const engine = new MarkdownEngine();
 
-	let d1 = vscode.commands.registerCommand('markdown.showPreview', showPreview);
-	let d2 = vscode.commands.registerCommand('markdown.showPreviewToSide', uri => showPreview(uri, true));
-	let d3 = vscode.commands.registerCommand('markdown.showSource', showSource);
+	const contentProvider = new MDDocumentContentProvider(engine, context);
+	const contentProviderRegistration = vscode.workspace.registerTextDocumentContentProvider('markdown', contentProvider);
 
-	context.subscriptions.push(d1, d2, d3, registration);
+	const symbolsProvider = new MDDocumentSymbolProvider(engine);
+	const symbolsProviderRegistration = vscode.languages.registerDocumentSymbolProvider({ language: 'markdown' }, symbolsProvider);
+	context.subscriptions.push(contentProviderRegistration, symbolsProviderRegistration);
 
-	vscode.workspace.onDidSaveTextDocument(document => {
+	context.subscriptions.push(vscode.languages.registerDocumentLinkProvider('markdown', new DocumentLinkProvider(engine)));
+
+	context.subscriptions.push(vscode.commands.registerCommand('markdown.showPreview', showPreview));
+	context.subscriptions.push(vscode.commands.registerCommand('markdown.showPreviewToSide', uri => showPreview(uri, true)));
+	context.subscriptions.push(vscode.commands.registerCommand('markdown.showSource', showSource));
+
+	context.subscriptions.push(vscode.commands.registerCommand('_markdown.revealLine', (uri, line) => {
+		const sourceUri = vscode.Uri.parse(decodeURIComponent(uri));
+		vscode.window.visibleTextEditors
+			.filter(editor => editor.document.uri.path === sourceUri.path)
+			.forEach(editor => {
+				const sourceLine = Math.floor(line);
+				const text = editor.document.getText(new vscode.Range(sourceLine, 0, sourceLine + 1, 0));
+				const fraction = line - Math.floor(line);
+				const start = Math.floor(fraction * text.length);
+				editor.revealRange(
+					new vscode.Range(sourceLine, start, sourceLine + 1, 0),
+					vscode.TextEditorRevealType.AtTop);
+			});
+	}));
+
+	context.subscriptions.push(vscode.commands.registerCommand('_markdown.didClick', (uri, line) => {
+		const sourceUri = vscode.Uri.parse(decodeURIComponent(uri));
+		return vscode.workspace.openTextDocument(sourceUri)
+			.then(document => vscode.window.showTextDocument(document))
+			.then(editor => vscode.commands.executeCommand('revealLine', { lineNumber: Math.floor(line), at: 'center' }).then(() => editor))
+			.then(editor => {
+				if (editor) {
+					editor.selection = new vscode.Selection(
+						new vscode.Position(Math.floor(line), 0),
+						new vscode.Position(Math.floor(line), 0));
+				}
+			});
+	}));
+
+	context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(document => {
 		if (isMarkdownFile(document)) {
 			const uri = getMarkdownUri(document.uri);
-			provider.update(uri);
+			contentProvider.update(uri);
 		}
-	});
+	}));
 
-	vscode.workspace.onDidChangeTextDocument(event => {
+	context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(event => {
 		if (isMarkdownFile(event.document)) {
 			const uri = getMarkdownUri(event.document.uri);
-			provider.update(uri);
-
+			contentProvider.update(uri);
 		}
-	});
+	}));
 
-	vscode.workspace.onDidChangeConfiguration(() => {
+	context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(() => {
 		vscode.workspace.textDocuments.forEach(document => {
 			if (document.uri.scheme === 'markdown') {
 				// update all generated md documents
-				provider.update(document.uri);
+				contentProvider.update(document.uri);
 			}
 		});
-	});
+	}));
+
+	context.subscriptions.push(vscode.window.onDidChangeTextEditorSelection(event => {
+		if (isMarkdownFile(event.textEditor.document)) {
+			vscode.commands.executeCommand('_workbench.htmlPreview.postMessage',
+				getMarkdownUri(event.textEditor.document.uri),
+				{
+					line: event.selections[0].active.line
+				});
+		}
+	}));
 }
 
 function isMarkdownFile(document: vscode.TextDocument) {
@@ -89,15 +135,17 @@ function showPreview(uri?: vscode.Uri, sideBySide: boolean = false) {
 		getViewColumn(sideBySide),
 		`Preview '${path.basename(resource.fsPath)}'`);
 
-	telemetryReporter.sendTelemetryEvent('openPreview', {
-		where: sideBySide ? 'sideBySide' : 'inPlace',
-		how: (uri instanceof vscode.Uri) ? 'action' : 'pallete'
-	});
+	if (telemetryReporter) {
+		telemetryReporter.sendTelemetryEvent('openPreview', {
+			where: sideBySide ? 'sideBySide' : 'inPlace',
+			how: (uri instanceof vscode.Uri) ? 'action' : 'pallete'
+		});
+	}
 
 	return thenable;
 }
 
-function getViewColumn(sideBySide): vscode.ViewColumn {
+function getViewColumn(sideBySide: boolean): vscode.ViewColumn | undefined {
 	const active = vscode.window.activeTextEditor;
 	if (!active) {
 		return vscode.ViewColumn.One;
@@ -135,57 +183,34 @@ function showSource(mdUri: vscode.Uri) {
 	});
 }
 
-function getPackageInfo(context: vscode.ExtensionContext): IPackageInfo {
-	let extensionPackage = require(context.asAbsolutePath('./package.json'));
-	if (extensionPackage) {
+function getPackageInfo(): IPackageInfo | null {
+	const extention = vscode.extensions.getExtension('Microsoft.vscode-markdown');
+	if (extention && extention.packageJSON) {
 		return {
-			name: extensionPackage.name,
-			version: extensionPackage.version,
-			aiKey: extensionPackage.aiKey
+			name: extention.packageJSON.name,
+			version: extention.packageJSON.version,
+			aiKey: extention.packageJSON.aiKey
 		};
 	}
 	return null;
 }
 
-
-interface IRenderer {
-	render(text: string): string;
-}
-
 class MDDocumentContentProvider implements vscode.TextDocumentContentProvider {
-	private _context: vscode.ExtensionContext;
 	private _onDidChange = new vscode.EventEmitter<vscode.Uri>();
 	private _waiting: boolean;
-	private _renderer: IRenderer;
 
-	constructor(context: vscode.ExtensionContext) {
-		this._context = context;
+	constructor(
+		private engine: MarkdownEngine,
+		private context: vscode.ExtensionContext
+	) {
 		this._waiting = false;
-		this._renderer = this.createRenderer();
 	}
 
-	private createRenderer(): IRenderer {
-		const hljs = require('highlight.js');
-		const mdnh = require('markdown-it-named-headers');
-		const md = require('markdown-it')({
-			html: true,
-			highlight: function (str, lang) {
-				if (lang && hljs.getLanguage(lang)) {
-					try {
-						return `<pre class="hljs"><code><div>${hljs.highlight(lang, str, true).value}</div></code></pre>`;
-					} catch (error) { }
-				}
-				return `<pre class="hljs"><code><div>${md.utils.escapeHtml(str)}</div></code></pre>`;
-			}
-		}).use(mdnh, {});
-		return md;
+	private getMediaPath(mediaFile: string): string {
+		return this.context.asAbsolutePath(path.join('media', mediaFile));
 	}
 
-	private getMediaPath(mediaFile): string {
-		return this._context.asAbsolutePath(path.join('media', mediaFile));
-	}
-
-	private isAbsolute(p): boolean {
+	private isAbsolute(p: string): boolean {
 		return path.normalize(p + '/') === path.normalize(path.resolve(p) + '/');
 	}
 
@@ -213,38 +238,72 @@ class MDDocumentContentProvider implements vscode.TextDocumentContentProvider {
 		return href;
 	}
 
-	private computeCustomStyleSheetIncludes(uri: vscode.Uri): string[] {
+	private computeCustomStyleSheetIncludes(uri: vscode.Uri): string {
 		const styles = vscode.workspace.getConfiguration('markdown')['styles'];
 		if (styles && Array.isArray(styles) && styles.length > 0) {
 			return styles.map((style) => {
 				return `<link rel="stylesheet" href="${this.fixHref(uri, style)}" type="text/css" media="screen">`;
-			});
+			}).join('\n');
 		}
-		return [];
+		return '';
+	}
+
+	private getSettingsOverrideStyles(): string {
+		const previewSettings = vscode.workspace.getConfiguration('markdown')['preview'];
+		if (!previewSettings) {
+			return '';
+		}
+		const {fontFamily, fontSize, lineHeight} = previewSettings;
+		return `<style>
+			body {
+				${fontFamily ? `font-family: ${fontFamily};` : ''}
+				${+fontSize > 0 ? `font-size: ${fontSize}px;` : ''}
+				${+lineHeight > 0 ? `line-height: ${lineHeight};` : ''}
+			}
+		</style>`;
 	}
 
 	public provideTextDocumentContent(uri: vscode.Uri): Thenable<string> {
-		return vscode.workspace.openTextDocument(vscode.Uri.parse(uri.query)).then(document => {
-			const head = [].concat(
-				'<!DOCTYPE html>',
-				'<html>',
-				'<head>',
-				'<meta http-equiv="Content-type" content="text/html;charset=UTF-8">',
-				`<link rel="stylesheet" type="text/css" href="${this.getMediaPath('markdown.css')}" >`,
-				`<link rel="stylesheet" type="text/css" href="${this.getMediaPath('tomorrow.css')}" >`,
-				this.computeCustomStyleSheetIncludes(uri),
-				`<base href="${document.uri.toString(true)}">`,
-				'</head>',
-				'<body>'
-			).join('\n');
-			const body = this._renderer.render(this.getDocumentContentForPreview(document));
+		const sourceUri = vscode.Uri.parse(uri.query);
+		return vscode.workspace.openTextDocument(sourceUri).then(document => {
+			const scrollBeyondLastLine = vscode.workspace.getConfiguration('editor')['scrollBeyondLastLine'];
+			const wordWrap = vscode.workspace.getConfiguration('editor')['wordWrap'];
 
-			const tail = [
-				'</body>',
-				'</html>'
-			].join('\n');
+			const markdownConfig = vscode.workspace.getConfiguration('markdown');
+			const previewFrontMatter = markdownConfig.get('previewFrontMatter', 'hide');
 
-			return head + body + tail;
+			let initialLine = 0;
+			const editor = vscode.window.activeTextEditor;
+			if (editor && editor.document.uri.path === sourceUri.path) {
+				initialLine = editor.selection.active.line;
+			}
+
+			const body = this.engine.render(sourceUri, previewFrontMatter === 'hide', document.getText());
+
+			return `<!DOCTYPE html>
+				<html>
+				<head>
+					<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+					<link rel="stylesheet" type="text/css" href="${this.getMediaPath('markdown.css')}">
+					<link rel="stylesheet" type="text/css" href="${this.getMediaPath('tomorrow.css')}">
+					${this.getSettingsOverrideStyles()}
+					${this.computeCustomStyleSheetIncludes(uri)}
+					<base href="${document.uri.toString(true)}">
+				</head>
+				<body class="${scrollBeyondLastLine ? 'scrollBeyondLastLine' : ''} ${wordWrap ? 'wordWrap' : ''} ${!!markdownConfig.get('preview.markEditorSelection') ? 'showEditorSelection' : ''}">
+					${body}
+					<script>
+						window.initialData = {
+							source: "${encodeURIComponent(sourceUri.scheme + '://' + sourceUri.path)}",
+							line: ${initialLine},
+							scrollPreviewWithEditorSelection: ${!!markdownConfig.get('preview.scrollPreviewWithEditorSelection', true)},
+							scrollEditorWithPreview: ${!!markdownConfig.get('preview.scrollEditorWithPreview', true)},
+							doubleClickToSwitchToEditor: ${!!markdownConfig.get('preview.doubleClickToSwitchToEditor', true)},
+						};
+					</script>
+					<script src="${this.getMediaPath('main.js')}"></script>
+				</body>
+				</html>`;
 		});
 	}
 
@@ -260,14 +319,5 @@ class MDDocumentContentProvider implements vscode.TextDocumentContentProvider {
 				this._onDidChange.fire(uri);
 			}, 300);
 		}
-	}
-
-	private getDocumentContentForPreview(document: vscode.TextDocument): string {
-		const content = document.getText();
-		const previewFrontMatter = vscode.workspace.getConfiguration('markdown')['previewFrontMatter'];
-		if (previewFrontMatter === 'hide') {
-			return content.replace(/^-{3}[ \t]*(\r\n|\n)(.|\r\n|\n)*?(\r\n|\n)-{3}[ \t]*(\r\n|\n)/, '');
-		}
-		return content;
 	}
 }

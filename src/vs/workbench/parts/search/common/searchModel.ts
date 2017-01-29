@@ -3,7 +3,6 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import * as timer from 'vs/base/common/timer';
 import paths = require('vs/base/common/paths');
 import objects = require('vs/base/common/objects');
 import strings = require('vs/base/common/strings');
@@ -19,8 +18,8 @@ import { ISearchService, ISearchProgressItem, ISearchComplete, ISearchQuery, IPa
 import { ReplacePattern } from 'vs/platform/search/common/replace';
 import { ITelemetryService } from 'vs/platform/telemetry/common/telemetry';
 import { Range } from 'vs/editor/common/core/range';
-import { IModel, IModelDeltaDecoration, OverviewRulerLane, TrackedRangeStickiness, IModelDecorationOptions } from 'vs/editor/common/editorCommon';
-import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
+import { IModel, IModelDeltaDecoration, OverviewRulerLane, TrackedRangeStickiness, IModelDecorationOptions, FindMatch } from 'vs/editor/common/editorCommon';
+import { IInstantiationService, createDecorator } from 'vs/platform/instantiation/common/instantiation';
 import { IModelService } from 'vs/editor/common/services/modelService';
 import { IReplaceService } from 'vs/workbench/parts/search/common/replace';
 import { IProgressRunner } from 'vs/platform/progress/common/progress';
@@ -181,7 +180,7 @@ export class FileMatch extends Disposable {
 		}
 		this._matches = new LinkedMap<string, Match>();
 		let matches = this._model
-			.findMatches(this._query.pattern, this._model.getFullModelRange(), this._query.isRegExp, this._query.isCaseSensitive, this._query.isWordMatch);
+			.findMatches(this._query.pattern, this._model.getFullModelRange(), this._query.isRegExp, this._query.isCaseSensitive, this._query.isWordMatch, false);
 
 		this.updateMatches(matches);
 	}
@@ -196,13 +195,13 @@ export class FileMatch extends Disposable {
 		const oldMatches = this._matches.values().filter(match => match.range().startLineNumber === lineNumber);
 		oldMatches.forEach(match => this._matches.delete(match.id()));
 
-		const matches = this._model.findMatches(this._query.pattern, range, this._query.isRegExp, this._query.isCaseSensitive, this._query.isWordMatch);
+		const matches = this._model.findMatches(this._query.pattern, range, this._query.isRegExp, this._query.isCaseSensitive, this._query.isWordMatch, false);
 		this.updateMatches(matches);
 	}
 
-	private updateMatches(matches: Range[]) {
-		matches.forEach(range => {
-			let match = new Match(this, this._model.getLineContent(range.startLineNumber), range.startLineNumber - 1, range.startColumn - 1, range.endColumn - range.startColumn);
+	private updateMatches(matches: FindMatch[]) {
+		matches.forEach(m => {
+			let match = new Match(this, this._model.getLineContent(m.range.startLineNumber), m.range.startLineNumber - 1, m.range.startColumn - 1, m.range.endColumn - m.range.startColumn);
 			if (!this._removedMatches.contains(match.id())) {
 				this.add(match);
 				if (this.isMatchSelected(match)) {
@@ -498,9 +497,12 @@ export class SearchModel extends Disposable {
 	private _replaceString: string = null;
 	private _replacePattern: ReplacePattern = null;
 
+	private _onReplaceTermChanged: Emitter<void> = this._register(new Emitter<void>());
+	public onReplaceTermChanged: Event<void> = this._onReplaceTermChanged.event;
+
 	private currentRequest: PPromise<ISearchComplete, ISearchProgressItem>;
 
-	constructor( @ISearchService private searchService, @ITelemetryService private telemetryService: ITelemetryService, @IInstantiationService private instantiationService: IInstantiationService) {
+	constructor( @ISearchService private searchService: ISearchService, @ITelemetryService private telemetryService: ITelemetryService, @IInstantiationService private instantiationService: IInstantiationService) {
 		super();
 		this._searchResult = this.instantiationService.createInstance(SearchResult, this);
 	}
@@ -526,6 +528,7 @@ export class SearchModel extends Disposable {
 		if (this._searchQuery) {
 			this._replacePattern = new ReplacePattern(replaceString, this._searchQuery.contentPattern);
 		}
+		this._onReplaceTermChanged.fire();
 	}
 
 	public get searchResult(): SearchResult {
@@ -540,14 +543,12 @@ export class SearchModel extends Disposable {
 		this._searchResult.query = this._searchQuery.contentPattern;
 		this._replacePattern = new ReplacePattern(this._replaceString, this._searchQuery.contentPattern);
 
-		const timerEvent = timer.start(timer.Topic.WORKBENCH, 'Search');
 		this.currentRequest = this.searchService.search(this._searchQuery);
 
 		const onDone = fromPromise(this.currentRequest);
 		const onDoneStopwatch = stopwatch(onDone);
 		const start = Date.now();
 
-		onDone(() => timerEvent.stop());
 		onDoneStopwatch(duration => this.telemetryService.publicLog('searchResultsFinished', { duration }));
 
 		const progressEmitter = new Emitter<void>();
@@ -612,3 +613,27 @@ export class SearchModel extends Disposable {
 }
 
 export type FileMatchOrMatch = FileMatch | Match;
+
+export class SearchWorkbenchService implements ISearchWorkbenchService {
+
+	_serviceBrand: any;
+	private _searchModel: SearchModel;
+
+	constructor( @IInstantiationService private instantiationService: IInstantiationService) {
+	}
+
+	get searchModel(): SearchModel {
+		if (!this._searchModel) {
+			this._searchModel = this.instantiationService.createInstance(SearchModel);
+		}
+		return this._searchModel;
+	}
+}
+
+export const ISearchWorkbenchService = createDecorator<ISearchWorkbenchService>('searchWorkbenchService');
+
+export interface ISearchWorkbenchService {
+	_serviceBrand: any;
+
+	readonly searchModel: SearchModel;
+}

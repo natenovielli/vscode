@@ -35,6 +35,7 @@ import { IWorkbenchEditorService } from 'vs/workbench/services/editor/common/edi
 import { IURLService } from 'vs/platform/url/common/url';
 import { ExtensionsInput } from 'vs/workbench/parts/extensions/common/extensionsInput';
 import { IWorkspaceContextService } from 'vs/platform/workspace/common/workspace';
+import product from 'vs/platform/node/product';
 
 interface IExtensionStateProvider {
 	(extension: Extension): ExtensionState;
@@ -57,15 +58,15 @@ class Extension implements IExtension {
 	}
 
 	get name(): string {
-		return this.local ? this.local.manifest.name : this.gallery.name;
+		return this.gallery ? this.gallery.name : this.local.manifest.name;
 	}
 
 	get displayName(): string {
-		if (this.local) {
-			return this.local.manifest.displayName || this.local.manifest.name;
+		if (this.gallery) {
+			return this.gallery.displayName || this.gallery.name;
 		}
 
-		return this.gallery.displayName || this.gallery.name;
+		return this.local.manifest.displayName || this.local.manifest.name;
 	}
 
 	get identifier(): string {
@@ -73,19 +74,19 @@ class Extension implements IExtension {
 	}
 
 	get publisher(): string {
-		return this.local ? this.local.manifest.publisher : this.gallery.publisher;
+		return this.gallery ? this.gallery.publisher : this.local.manifest.publisher;
 	}
 
 	get publisherDisplayName(): string {
-		if (this.local) {
-			if (this.local.metadata && this.local.metadata.publisherDisplayName) {
-				return this.local.metadata.publisherDisplayName;
-			}
-
-			return this.local.manifest.publisher;
+		if (this.gallery) {
+			return this.gallery.publisherDisplayName || this.gallery.publisher;
 		}
 
-		return this.gallery.publisherDisplayName || this.gallery.publisher;
+		if (this.local.metadata && this.local.metadata.publisherDisplayName) {
+			return this.local.metadata.publisherDisplayName;
+		}
+
+		return this.local.manifest.publisher;
 	}
 
 	get version(): string {
@@ -97,23 +98,23 @@ class Extension implements IExtension {
 	}
 
 	get description(): string {
-		return this.local ? this.local.manifest.description : this.gallery.description;
+		return this.gallery ? this.gallery.description : this.local.manifest.description;
 	}
 
-	private get changelogUrl(): string {
-		if (this.local && this.local.changelogUrl) {
-			return this.local.changelogUrl;
+	get url(): string {
+		if (!product.extensionsGallery) {
+			return null;
 		}
 
-		return this.gallery && this.gallery.assets.changelog;
+		return `${product.extensionsGallery.itemUrl}?itemName=${this.publisher}.${this.name}`;
 	}
 
 	get iconUrl(): string {
-		return this.localIconUrl || this.galleryIconUrl || this.defaultIconUrl;
+		return this.galleryIconUrl || this.localIconUrl || this.defaultIconUrl;
 	}
 
 	get iconUrlFallback(): string {
-		return this.localIconUrl || this.galleryIconUrlFallback || this.defaultIconUrl;
+		return this.galleryIconUrlFallback || this.localIconUrl || this.defaultIconUrl;
 	}
 
 	private get localIconUrl(): string {
@@ -122,11 +123,11 @@ class Extension implements IExtension {
 	}
 
 	private get galleryIconUrl(): string {
-		return this.gallery && this.gallery.assets.icon;
+		return this.gallery && this.gallery.assets.icon.uri;
 	}
 
 	private get galleryIconUrlFallback(): string {
-		return this.gallery && this.gallery.assets.iconFallback;
+		return this.gallery && this.gallery.assets.icon.fallbackUri;
 	}
 
 	private get defaultIconUrl(): string {
@@ -134,7 +135,7 @@ class Extension implements IExtension {
 	}
 
 	get licenseUrl(): string {
-		return this.gallery && this.gallery.assets.license;
+		return this.gallery && this.gallery.assets.license && this.gallery.assets.license.uri;
 	}
 
 	get state(): ExtensionState {
@@ -168,28 +169,32 @@ class Extension implements IExtension {
 	}
 
 	getManifest(): TPromise<IExtensionManifest> {
-		if (this.local) {
-			return TPromise.as(this.local.manifest);
+		if (this.gallery) {
+			return this.galleryService.getManifest(this.gallery);
 		}
 
-		return this.galleryService.getManifest(this.gallery);
+		return TPromise.as(this.local.manifest);
 	}
 
 	getReadme(): TPromise<string> {
+		if (this.gallery) {
+			return this.galleryService.getReadme(this.gallery);
+		}
+
 		if (this.local && this.local.readmeUrl) {
 			const uri = URI.parse(this.local.readmeUrl);
 			return readFile(uri.fsPath, 'utf8');
-		}
-
-		if (this.gallery) {
-			return this.galleryService.getReadme(this.gallery);
 		}
 
 		return TPromise.wrapError('not available');
 	}
 
 	getChangelog(): TPromise<string> {
-		const changelogUrl = this.changelogUrl;
+		if (this.gallery && this.gallery.assets.changelog) {
+			return this.galleryService.getChangelog(this.gallery);
+		}
+
+		const changelogUrl = this.local && this.local.changelogUrl;
 
 		if (!changelogUrl) {
 			return TPromise.wrapError('not available');
@@ -201,7 +206,6 @@ class Extension implements IExtension {
 			return readFile(uri.fsPath, 'utf8');
 		}
 
-		// TODO@Joao
 		return TPromise.wrapError('not available');
 	}
 
@@ -423,6 +427,10 @@ export class ExtensionsWorkbenchService implements IExtensionsWorkbenchService {
 		this.eventuallyAutoUpdateExtensions();
 	}
 
+	checkForUpdates(): TPromise<void> {
+		return this.syncDelayer.trigger(() => this.syncWithGallery(), 0);
+	}
+
 	private eventuallySyncWithGallery(immediate = false): void {
 		const loop = () => this.syncWithGallery().then(() => this.eventuallySyncWithGallery());
 		const delay = immediate ? 0 : ExtensionsWorkbenchService.SyncPeriod;
@@ -492,7 +500,7 @@ export class ExtensionsWorkbenchService implements IExtensionsWorkbenchService {
 			return TPromise.wrap(null);
 		}
 
-		return this.doSetEnablement(extension, enable, workspace).then(reload => {
+		return this.promptAndSetEnablement(extension, enable, workspace).then(reload => {
 			this.telemetryService.publicLog(enable ? 'extension:enable' : 'extension:disable', extension.telemetryData);
 		});
 	}
@@ -513,13 +521,127 @@ export class ExtensionsWorkbenchService implements IExtensionsWorkbenchService {
 
 	}
 
+	private promptAndSetEnablement(extension: IExtension, enable: boolean, workspace: boolean): TPromise<any> {
+		const allDependencies = this.getDependenciesRecursively(extension, this.local, enable, workspace, []);
+		if (allDependencies.length > 0) {
+			if (enable) {
+				return this.promptForDependenciesAndEnable(extension, allDependencies, workspace);
+			} else {
+				return this.promptForDependenciesAndDisable(extension, allDependencies, workspace);
+			}
+		}
+		return this.checkAndSetEnablement(extension, [], enable, workspace);
+	}
+
+	private promptForDependenciesAndEnable(extension: IExtension, dependencies: IExtension[], workspace: boolean): TPromise<any> {
+		const message = nls.localize('enableDependeciesConfirmation', "Enabling '{0}' also enable its dependencies. Would you like to continue?", extension.displayName);
+		const options = [
+			nls.localize('enable', "Yes"),
+			nls.localize('doNotEnable', "No")
+		];
+		return this.choiceService.choose(Severity.Info, message, options, true)
+			.then<void>(value => {
+				if (value === 0) {
+					return this.checkAndSetEnablement(extension, dependencies, true, workspace);
+				}
+				return TPromise.as(null);
+			});
+	}
+
+	private promptForDependenciesAndDisable(extension: IExtension, dependencies: IExtension[], workspace: boolean): TPromise<void> {
+		const message = nls.localize('disableDependeciesConfirmation', "Would you like to disable '{0}' only or its dependencies also?", extension.displayName);
+		const options = [
+			nls.localize('disableOnly', "Only"),
+			nls.localize('disableAll', "All"),
+			nls.localize('cancel', "Cancel")
+		];
+		return this.choiceService.choose(Severity.Info, message, options, true)
+			.then<void>(value => {
+				if (value === 0) {
+					return this.checkAndSetEnablement(extension, [], false, workspace);
+				}
+				if (value === 1) {
+					return this.checkAndSetEnablement(extension, dependencies, false, workspace);
+				}
+				return TPromise.as(null);
+			});
+	}
+
+	private checkAndSetEnablement(extension: IExtension, dependencies: IExtension[], enable: boolean, workspace: boolean): TPromise<any> {
+		if (!enable) {
+			let dependents = this.getDependentsAfterDisablement(extension, dependencies, this.local, workspace);
+			if (dependents.length) {
+				return TPromise.wrapError<void>(this.getDependentsErrorMessage(extension, dependents));
+			}
+		}
+		return TPromise.join([extension, ...dependencies].map(e => this.doSetEnablement(e, enable, workspace)));
+	}
+
+	private getDependenciesRecursively(extension: IExtension, installed: IExtension[], enable: boolean, workspace: boolean, checked: IExtension[]): IExtension[] {
+		if (checked.indexOf(extension) !== -1) {
+			return [];
+		}
+		checked.push(extension);
+		if (!extension.dependencies || extension.dependencies.length === 0) {
+			return [];
+		}
+		const dependenciesToDisable = installed.filter(i => {
+			// Do not include extensions which are already disabled and request is to disable
+			if (!enable && (workspace ? i.disabledForWorkspace : i.disabledGlobally)) {
+				return false;
+			}
+			return i.type === LocalExtensionType.User && extension.dependencies.indexOf(i.identifier) !== -1;
+		});
+		const depsOfDeps = [];
+		for (const dep of dependenciesToDisable) {
+			depsOfDeps.push(...this.getDependenciesRecursively(dep, installed, enable, workspace, checked));
+		}
+		return [...dependenciesToDisable, ...depsOfDeps];
+	}
+
+	private getDependentsAfterDisablement(extension: IExtension, dependencies: IExtension[], installed: IExtension[], workspace: boolean): IExtension[] {
+		return installed.filter(i => {
+			if (i.dependencies.length === 0) {
+				return false;
+			}
+			if (i === extension) {
+				return false;
+			}
+			const disabled = workspace ? i.disabledForWorkspace : i.disabledGlobally;
+			if (disabled) {
+				return false;
+			}
+			if (dependencies.indexOf(i) !== -1) {
+				return false;
+			}
+			return i.dependencies.some(dep => {
+				if (extension.identifier === dep) {
+					return true;
+				}
+				return dependencies.some(d => d.identifier === dep);
+			});
+		});
+	}
+
+	private getDependentsErrorMessage(extension: IExtension, dependents: IExtension[]): string {
+		if (dependents.length === 1) {
+			return nls.localize('singleDependentError', "Cannot disable extension '{0}'. Extension '{1}' depends on this.", extension.displayName, dependents[0].displayName);
+		}
+		if (dependents.length === 2) {
+			return nls.localize('twoDependentsError', "Cannot disable extension '{0}'. Extensions '{1}' and '{2}' depend on this.",
+				extension.displayName, dependents[0].displayName, dependents[1].displayName);
+		}
+		return nls.localize('multipleDependentsError', "Cannot disable extension '{0}'. Extensions '{1}', '{2}' and others depend on this.",
+			extension.displayName, dependents[0].displayName, dependents[1].displayName);
+	}
+
 	private doSetEnablement(extension: IExtension, enable: boolean, workspace: boolean): TPromise<boolean> {
 		if (workspace) {
 			return this.extensionEnablementService.setEnablement(extension.identifier, enable, workspace);
 		}
 
 		const globalElablement = this.extensionEnablementService.setEnablement(extension.identifier, enable, false);
-		if (enable && this.workspaceContextService.getWorkspace()) {
+		if (enable && this.workspaceContextService.hasWorkspace()) {
 			const workspaceEnablement = this.extensionEnablementService.setEnablement(extension.identifier, enable, true);
 			return TPromise.join([globalElablement, workspaceEnablement]).then(values => values[0] || values[1]);
 		}
@@ -572,11 +694,10 @@ export class ExtensionsWorkbenchService implements IExtensionsWorkbenchService {
 						.then(null, onUnexpectedError);
 				}
 			}
-		}
-
-		if (extension.gallery) {
-			// Report telemetry only for gallery extensions
-			this.reportTelemetry(installing, !error);
+			if (extension.gallery) {
+				// Report telemetry only for gallery extensions
+				this.reportTelemetry(installing, !error);
+			}
 		}
 		this._onChange.fire();
 	}
@@ -670,7 +791,7 @@ export class ExtensionsWorkbenchService implements IExtensionsWorkbenchService {
 	}
 
 	private getExtensionState(extension: Extension): ExtensionState {
-		if (extension.gallery && this.installing.some(e => e.extension.gallery.id === extension.gallery.id)) {
+		if (extension.gallery && this.installing.some(e => e.extension.gallery && e.extension.gallery.id === extension.gallery.id)) {
 			return ExtensionState.Installing;
 		}
 
@@ -720,7 +841,14 @@ export class ExtensionsWorkbenchService implements IExtensionsWorkbenchService {
 				}
 
 				const extension = result.firstPage[0];
-				this.open(extension).done(null, error => this.onError(error));
+				const promises = [this.open(extension)];
+
+				if (this.local.every(local => local.identifier !== extension.identifier)) {
+					promises.push(this.install(extension));
+				}
+
+				TPromise.join(promises)
+					.done(null, error => this.onError(error));
 			});
 	}
 

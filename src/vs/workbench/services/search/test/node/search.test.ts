@@ -14,8 +14,13 @@ import * as platform from 'vs/base/common/platform';
 import { LineMatch } from 'vs/platform/search/common/search';
 
 import { FileWalker, Engine as FileSearchEngine } from 'vs/workbench/services/search/node/fileSearch';
-import { IRawFileMatch } from 'vs/workbench/services/search/node/search';
+import { IRawFileMatch, ISerializedFileMatch } from 'vs/workbench/services/search/node/search';
 import { Engine as TextSearchEngine } from 'vs/workbench/services/search/node/textSearch';
+import { TextSearchWorkerProvider } from 'vs/workbench/services/search/node/textSearchWorkerProvider';
+
+function countAll(matches: ISerializedFileMatch[]): number {
+	return matches.reduce((acc, m) => acc + count(m.lineMatches), 0);
+}
 
 function count(lineMatches: LineMatch[]): number {
 	let count = 0;
@@ -33,6 +38,8 @@ function count(lineMatches: LineMatch[]): number {
 function rootfolders() {
 	return [path.normalize(require.toUrl('./fixtures'))];
 }
+
+const textSearchWorkerProvider = new TextSearchWorkerProvider();
 
 suite('Search', () => {
 
@@ -622,11 +629,11 @@ suite('Search', () => {
 			contentPattern: { pattern: 'GameOfLife', modifiers: 'i' }
 		};
 
-		let engine = new TextSearchEngine(config, new FileWalker(config));
+		let engine = new TextSearchEngine(config, new FileWalker(config), textSearchWorkerProvider);
 
 		engine.search((result) => {
-			if (result && result.lineMatches) {
-				c += count(result.lineMatches);
+			if (result) {
+				c += countAll(result);
 			}
 		}, () => { }, (error) => {
 			assert.ok(!error);
@@ -643,11 +650,11 @@ suite('Search', () => {
 			contentPattern: { pattern: 'Game.?fL\\w?fe', isRegExp: true }
 		};
 
-		let engine = new TextSearchEngine(config, new FileWalker(config));
+		let engine = new TextSearchEngine(config, new FileWalker(config), textSearchWorkerProvider);
 
 		engine.search((result) => {
-			if (result && result.lineMatches) {
-				c += count(result.lineMatches);
+			if (result) {
+				c += countAll(result);
 			}
 		}, () => { }, (error) => {
 			assert.ok(!error);
@@ -664,11 +671,11 @@ suite('Search', () => {
 			contentPattern: { pattern: 'GameOfLife', isWordMatch: true, isCaseSensitive: true }
 		};
 
-		let engine = new TextSearchEngine(config, new FileWalker(config));
+		let engine = new TextSearchEngine(config, new FileWalker(config), textSearchWorkerProvider);
 
 		engine.search((result) => {
-			if (result && result.lineMatches) {
-				c += count(result.lineMatches);
+			if (result) {
+				c += countAll(result);
 			}
 		}, () => { }, (error) => {
 			assert.ok(!error);
@@ -685,15 +692,15 @@ suite('Search', () => {
 			contentPattern: { pattern: 'Helvetica', modifiers: 'i' }
 		};
 
-		let engine = new TextSearchEngine(config, new FileWalker(config));
+		let engine = new TextSearchEngine(config, new FileWalker(config), textSearchWorkerProvider);
 
 		engine.search((result) => {
-			if (result && result.lineMatches) {
-				c += count(result.lineMatches);
+			if (result) {
+				c += countAll(result);
 			}
 		}, () => { }, (error) => {
 			assert.ok(!error);
-			assert.equal(c, 2);
+			assert.equal(c, 3);
 			done();
 		});
 	});
@@ -706,15 +713,15 @@ suite('Search', () => {
 			contentPattern: { pattern: 'e', modifiers: 'i' }
 		};
 
-		let engine = new TextSearchEngine(config, new FileWalker(config));
+		let engine = new TextSearchEngine(config, new FileWalker(config), textSearchWorkerProvider);
 
 		engine.search((result) => {
-			if (result && result.lineMatches) {
-				c += count(result.lineMatches);
+			if (result) {
+				c += countAll(result);
 			}
 		}, (result) => { }, (error) => {
 			assert.ok(!error);
-			assert.equal(c, 748);
+			assert.equal(c, 776);
 			done();
 		});
 	});
@@ -728,15 +735,15 @@ suite('Search', () => {
 			excludePattern: { '**/examples': true }
 		};
 
-		let engine = new TextSearchEngine(config, new FileWalker(config));
+		let engine = new TextSearchEngine(config, new FileWalker(config), textSearchWorkerProvider);
 
 		engine.search((result) => {
-			if (result && result.lineMatches) {
-				c += count(result.lineMatches);
+			if (result) {
+				c += countAll(result);
 			}
 		}, (result) => { }, (error) => {
 			assert.ok(!error);
-			assert.equal(c, 366);
+			assert.equal(c, 394);
 			done();
 		});
 	});
@@ -750,11 +757,11 @@ suite('Search', () => {
 			includePattern: { '**/examples/**': true }
 		};
 
-		let engine = new TextSearchEngine(config, new FileWalker(config));
+		let engine = new TextSearchEngine(config, new FileWalker(config), textSearchWorkerProvider);
 
 		engine.search((result) => {
-			if (result && result.lineMatches) {
-				c += count(result.lineMatches);
+			if (result) {
+				c += countAll(result);
 			}
 		}, (result) => { }, (error) => {
 			assert.ok(!error);
@@ -773,11 +780,11 @@ suite('Search', () => {
 			excludePattern: { '**/examples/small.js': true }
 		};
 
-		let engine = new TextSearchEngine(config, new FileWalker(config));
+		let engine = new TextSearchEngine(config, new FileWalker(config), textSearchWorkerProvider);
 
 		engine.search((result) => {
-			if (result && result.lineMatches) {
-				c += count(result.lineMatches);
+			if (result) {
+				c += countAll(result);
 			}
 		}, (result) => { }, (error) => {
 			assert.ok(!error);
@@ -795,15 +802,18 @@ suite('Search', () => {
 			maxResults: 520
 		};
 
-		let engine = new TextSearchEngine(config, new FileWalker(config));
+		let engine = new TextSearchEngine(config, new FileWalker(config), textSearchWorkerProvider);
 
 		engine.search((result) => {
-			if (result && result.lineMatches) {
-				c += count(result.lineMatches);
+			if (result) {
+				c += countAll(result);
 			}
 		}, (result) => { }, (error) => {
 			assert.ok(!error);
-			assert.equal(c, 520);
+
+			// Search can go over the maxResults because it doesn't trim the results from its worker processes to the exact max size.
+			// But the worst-case scenario should be 2*max-1
+			assert.ok(c < 520 * 2);
 			done();
 		});
 	});
@@ -816,11 +826,11 @@ suite('Search', () => {
 			contentPattern: { pattern: 'ahsogehtdas', modifiers: 'i' }
 		};
 
-		let engine = new TextSearchEngine(config, new FileWalker(config));
+		let engine = new TextSearchEngine(config, new FileWalker(config), textSearchWorkerProvider);
 
 		engine.search((result) => {
-			if (result && result.lineMatches) {
-				c += count(result.lineMatches);
+			if (result) {
+				c += countAll(result);
 			}
 		}, (result) => { }, (error) => {
 			assert.ok(!error);

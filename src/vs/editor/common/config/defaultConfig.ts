@@ -63,6 +63,7 @@ class ConfigClass implements IConfiguration {
 			cursorStyle: 'line',
 			fontLigatures: false,
 			disableTranslate3d: false,
+			disableMonospaceOptimizations: false,
 			hideCursorInOverviewRuler: false,
 			scrollBeyondLastLine: true,
 			automaticLayout: false,
@@ -83,8 +84,10 @@ class ConfigClass implements IConfiguration {
 			iconsInSuggestions: true,
 			autoClosingBrackets: true,
 			formatOnType: false,
+			formatOnPaste: false,
 			suggestOnTriggerCharacters: true,
 			acceptSuggestionOnEnter: true,
+			acceptSuggestionOnCommitCharacter: true,
 			snippetSuggestions: 'bottom',
 			emptySelectionClipboard: true,
 			tabCompletion: false,
@@ -98,7 +101,7 @@ class ConfigClass implements IConfiguration {
 			renderWhitespace: 'none',
 			renderControlCharacters: false,
 			renderIndentGuides: false,
-			renderLineHighlight: 'all',
+			renderLineHighlight: 'line',
 			useTabStops: true,
 
 			fontFamily: (

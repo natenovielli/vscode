@@ -12,7 +12,6 @@ import * as winjs from 'vs/base/common/winjs.base';
 import * as ext from 'vs/workbench/common/contributions';
 import * as common from 'vs/editor/common/editorCommon';
 import * as widget from 'vs/editor/browser/codeEditor';
-import { IEventService } from 'vs/platform/event/common/event';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
 import { IMessageService } from 'vs/platform/message/common/message';
 import { IWorkspaceContextService } from 'vs/platform/workspace/common/workspace';
@@ -114,16 +113,28 @@ class DirtyDiffModelDecorator {
 			return this._originalURIPromise;
 		}
 
-		this._originalURIPromise = this.scmService.getBaselineResource(this.uri)
-			.then(originalUri => this.textModelResolverService.createModelReference(originalUri)
-				.then(ref => {
-					this.baselineModel = ref.object.textEditorModel;
+		const provider = this.scmService.activeProvider;
 
-					this.toDispose.push(ref);
-					this.toDispose.push(ref.object.textEditorModel.onDidChangeContent(() => this.triggerDiff()));
+		if (!provider) {
+			return winjs.TPromise.as(null);
+		}
 
-					return originalUri;
-				}, err => null));
+		this._originalURIPromise = provider.getOriginalResource(this.uri)
+			.then(originalUri => {
+				if (!originalUri) {
+					return null;
+				}
+
+				return this.textModelResolverService.createModelReference(originalUri)
+					.then(ref => {
+						this.baselineModel = ref.object.textEditorModel;
+
+						this.toDispose.push(ref);
+						this.toDispose.push(ref.object.textEditorModel.onDidChangeContent(() => this.triggerDiff()));
+
+						return originalUri;
+					});
+			});
 
 		return always(this._originalURIPromise, () => {
 			this._originalURIPromise = null;
@@ -196,7 +207,6 @@ export class DirtyDiffDecorator implements ext.IWorkbenchContribution {
 		@IMessageService private messageService: IMessageService,
 		@IWorkbenchEditorService private editorService: IWorkbenchEditorService,
 		@IEditorGroupService editorGroupService: IEditorGroupService,
-		@IEventService private eventService: IEventService,
 		@IWorkspaceContextService private contextService: IWorkspaceContextService,
 		@IInstantiationService private instantiationService: IInstantiationService
 	) {

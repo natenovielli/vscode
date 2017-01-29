@@ -8,22 +8,28 @@
 import * as path from 'path';
 import * as crypto from 'crypto';
 import pfs = require('vs/base/node/pfs');
+import * as platform from 'vs/base/common/platform';
 import Uri from 'vs/base/common/uri';
 import { IBackupFileService, BACKUP_FILE_UPDATE_OPTIONS } from 'vs/workbench/services/backup/common/backup';
+import { IBackupService } from 'vs/platform/backup/common/backup';
 import { IEnvironmentService } from 'vs/platform/environment/common/environment';
 import { IFileService } from 'vs/platform/files/common/files';
 import { TPromise } from 'vs/base/common/winjs.base';
+import { readToMatchingString } from 'vs/base/node/stream';
+import { IRawTextContent } from 'vs/workbench/services/textfile/common/textfiles';
+import { IWindowService } from 'vs/platform/windows/common/windows';
 
 export interface IBackupFilesModel {
 	resolve(backupRoot: string): TPromise<IBackupFilesModel>;
 
 	add(resource: Uri, versionId?: number): void;
 	has(resource: Uri, versionId?: number): boolean;
+	get(): Uri[];
 	remove(resource: Uri): void;
+	count(): number;
 	clear(): void;
 }
 
-// TODO@daniel this should resolve the backups with their file names once we have the metadata in place
 export class BackupFilesModel implements IBackupFilesModel {
 	private cache: { [resource: string]: number /* version ID */ } = Object.create(null);
 
@@ -51,6 +57,10 @@ export class BackupFilesModel implements IBackupFilesModel {
 		this.cache[resource.toString()] = versionId;
 	}
 
+	public count(): number {
+		return Object.keys(this.cache).length;
+	}
+
 	public has(resource: Uri, versionId?: number): boolean {
 		const cachedVersionId = this.cache[resource.toString()];
 		if (typeof cachedVersionId !== 'number') {
@@ -62,6 +72,10 @@ export class BackupFilesModel implements IBackupFilesModel {
 		}
 
 		return true;
+	}
+
+	public get(): Uri[] {
+		return Object.keys(this.cache).map(k => Uri.parse(k));
 	}
 
 	public remove(resource: Uri): void {
@@ -77,40 +91,44 @@ export class BackupFileService implements IBackupFileService {
 
 	public _serviceBrand: any;
 
-	protected backupHome: string;
-	protected workspacesJsonPath: string;
+	private static readonly META_MARKER = '\n';
 
+	private isShuttingDown: boolean;
 	private backupWorkspacePath: string;
 	private ready: TPromise<IBackupFilesModel>;
 
 	constructor(
-		private currentWorkspace: Uri,
 		@IEnvironmentService private environmentService: IEnvironmentService,
-		@IFileService private fileService: IFileService
+		@IFileService private fileService: IFileService,
+		@IWindowService windowService: IWindowService,
+		@IBackupService private backupService: IBackupService
 	) {
-		this.backupHome = environmentService.backupHome;
-		this.workspacesJsonPath = environmentService.backupWorkspacesPath;
-
-		if (this.currentWorkspace) {
-			const workspaceHash = crypto.createHash('md5').update(this.currentWorkspace.fsPath).digest('hex');
-			this.backupWorkspacePath = path.join(this.backupHome, workspaceHash);
-		}
-
-		this.ready = this.init();
+		this.isShuttingDown = false;
+		this.ready = this.init(windowService.getCurrentWindowId());
 	}
 
 	private get backupEnabled(): boolean {
-		return this.currentWorkspace && !this.environmentService.isExtensionDevelopment; // Hot exit is disabled for empty workspaces and when doing extension development
+		return !this.environmentService.isExtensionDevelopment; // Hot exit is disabled when doing extension development
 	}
 
-	private init(): TPromise<IBackupFilesModel> {
+	private init(windowId: number): TPromise<IBackupFilesModel> {
 		const model = new BackupFilesModel();
 
 		if (!this.backupEnabled) {
 			return TPromise.as(model);
 		}
 
-		return model.resolve(this.backupWorkspacePath);
+		return this.backupService.getBackupPath(windowId).then(backupPath => {
+			this.backupWorkspacePath = backupPath;
+
+			return model.resolve(this.backupWorkspacePath);
+		});
+	}
+
+	public hasBackups(): TPromise<boolean> {
+		return this.ready.then(model => {
+			return model.count() > 0;
+		});
 	}
 
 	public hasBackup(resource: Uri): TPromise<boolean> {
@@ -137,6 +155,10 @@ export class BackupFileService implements IBackupFileService {
 	}
 
 	public backupResource(resource: Uri, content: string, versionId?: number): TPromise<void> {
+		if (this.isShuttingDown) {
+			return TPromise.as(void 0);
+		}
+
 		return this.ready.then(model => {
 			const backupResource = this.getBackupResource(resource);
 			if (!backupResource) {
@@ -146,6 +168,9 @@ export class BackupFileService implements IBackupFileService {
 			if (model.has(backupResource, versionId)) {
 				return void 0; // return early if backup version id matches requested one
 			}
+
+			// Add metadata to top of file
+			content = `${resource.toString()}${BackupFileService.META_MARKER}${content}`;
 
 			return this.fileService.updateContent(backupResource, content, BACKUP_FILE_UPDATE_OPTIONS).then(() => model.add(backupResource, versionId));
 		});
@@ -158,18 +183,44 @@ export class BackupFileService implements IBackupFileService {
 				return void 0;
 			}
 
-			return this.fileService.del(backupResource).then(() => model.remove(backupResource));
+			return pfs.del(backupResource.fsPath).then(() => model.remove(backupResource));
 		});
 	}
 
 	public discardAllWorkspaceBackups(): TPromise<void> {
+		this.isShuttingDown = true;
+
 		return this.ready.then(model => {
 			if (!this.backupEnabled) {
 				return void 0;
 			}
 
-			return this.fileService.del(Uri.file(this.backupWorkspacePath)).then(() => model.clear());
+			return pfs.del(this.backupWorkspacePath).then(() => model.clear());
 		});
+	}
+
+	public getWorkspaceFileBackups(): TPromise<Uri[]> {
+		return this.ready.then(model => {
+			const readPromises: TPromise<Uri>[] = [];
+
+			model.get().forEach(fileBackup => {
+				readPromises.push(new TPromise<Uri>((c, e) => {
+					readToMatchingString(fileBackup.fsPath, BackupFileService.META_MARKER, 2000, 10000, (error, result) => {
+						if (result === null) {
+							e(error);
+						}
+
+						c(Uri.parse(result));
+					});
+				}));
+			});
+
+			return TPromise.join(readPromises);
+		});
+	}
+
+	public parseBackupContent(rawText: IRawTextContent): string {
+		return rawText.value.lines.slice(1).join(rawText.value.EOL); // The first line of a backup text file is the file name
 	}
 
 	protected getBackupResource(resource: Uri): Uri {
@@ -177,10 +228,13 @@ export class BackupFileService implements IBackupFileService {
 			return null;
 		}
 
-		// Only hash the file path if the file is not untitled
-		const backupName = resource.scheme === 'untitled' ? resource.fsPath : crypto.createHash('md5').update(resource.fsPath).digest('hex');
-		const backupPath = path.join(this.backupWorkspacePath, resource.scheme, backupName);
+		return Uri.file(path.join(this.backupWorkspacePath, resource.scheme, this.hashPath(resource)));
+	}
 
-		return Uri.file(backupPath);
+	private hashPath(resource: Uri): string {
+		// Windows and Mac paths are case insensitive, we want backups to be too
+		const caseAwarePath = platform.isWindows || platform.isMacintosh ? resource.fsPath.toLowerCase() : resource.fsPath;
+
+		return crypto.createHash('md5').update(caseAwarePath).digest('hex');
 	}
 }

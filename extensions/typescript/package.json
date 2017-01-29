@@ -11,11 +11,13 @@
 		"vscode": "*"
 	},
 	"dependencies": {
-		"@types/semver": "^5.3.30",
 		"semver": "4.3.6",
 		"vscode-extension-telemetry": "^0.0.5",
 		"vscode-nls": "^2.0.1",
-		"typescript": "2.0.10"
+		"typescript": "2.1.5"
+	},
+	"devDependencies": {
+		"@types/semver": "^5.3.30"
 	},
 	"scripts": {
 		"postinstall": "node ./bin/postinstall",
@@ -27,10 +29,12 @@
 		"onLanguage:javascriptreact",
 		"onLanguage:typescript",
 		"onLanguage:typescriptreact",
+		"onLanguage:jsx-tags",
 		"onCommand:typescript.reloadProjects",
 		"onCommand:javascript.reloadProjects"
 	],
 	"main": "./out/typescriptMain",
+	"enableProposedApi": true,
 	"contributes": {
 		"languages": [
 			{
@@ -66,7 +70,11 @@
 			{
 				"language": "typescriptreact",
 				"scopeName": "source.tsx",
-				"path": "./syntaxes/TypeScriptReact.tmLanguage.json"
+				"path": "./syntaxes/TypeScriptReact.tmLanguage.json",
+				"embeddedLanguages": {
+					"meta.tag.tsx": "jsx-tags",
+					"meta.tag.without-attributes.tsx": "jsx-tags"
+				}
 			}
 		],
 		"configuration": {
@@ -80,22 +88,23 @@
 						"null"
 					],
 					"default": null,
-					"description": "%typescript.tsdk.desc%"
+					"description": "%typescript.tsdk.desc%",
+					"isExecutable": true
 				},
 				"typescript.disableAutomaticTypeAcquisition": {
 					"type": "boolean",
 					"default": false,
 					"description": "%typescript.disableAutomaticTypeAcquisition%"
 				},
-				"typescript.check.workspaceVersion": {
-					"type": "boolean",
-					"default": true,
-					"description": "%typescript.check.workspaceVersion%"
-				},
 				"typescript.check.tscVersion": {
 					"type": "boolean",
 					"default": true,
 					"description": "%typescript.check.tscVersion%"
+				},
+				"typescript.referencesCodeLens.enabled": {
+					"type": "boolean",
+					"default": false,
+					"description": "%typescript.referencesCodeLens.enabled%"
 				},
 				"typescript.tsserver.trace": {
 					"type": "string",
@@ -244,11 +253,6 @@
 				}
 			}
 		},
-		"keybindings": {
-			"key": ".",
-			"command": "^acceptSelectedSuggestion",
-			"when": "editorTextFocus && suggestWidgetVisible && editorLangId == 'typescript' && suggestionSupportsAcceptOnKey"
-		},
 		"commands": [
 			{
 				"command": "typescript.reloadProjects",
@@ -285,6 +289,10 @@
 			{
 				"fileMatch": "tsconfig.json",
 				"url": "./schemas/tsconfig.schema.json"
+			},
+			{
+				"fileMatch": "typings.json",
+				"url": "http://json.schemastore.org/typings"
 			}
 		]
 	}
