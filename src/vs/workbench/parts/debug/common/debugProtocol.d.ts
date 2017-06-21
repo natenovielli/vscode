@@ -71,8 +71,12 @@ declare module DebugProtocol {
 	export interface StoppedEvent extends Event {
 		// event: 'stopped';
 		body: {
-			/** The reason for the event (such as: 'step', 'breakpoint', 'exception', 'pause'). This string is shown in the UI. */
+			/** The reason for the event (such as: 'step', 'breakpoint', 'exception', 'pause', 'entry').
+				For backward compatibility this string is shown in the UI if the 'description' attribute is missing (but it must not be translated).
+			*/
 			reason: string;
+			/** The full reason for the event, e.g. 'Paused on exception'. This string is shown in the UI as is. */
+			description?: string;
 			/** The thread which was stopped. */
 			threadId?: number;
 			/** Additional information. E.g. if reason is 'exception', text contains the exception name. This string is shown in the UI. */
@@ -117,8 +121,10 @@ declare module DebugProtocol {
 	export interface TerminatedEvent extends Event {
 		// event: 'terminated';
 		body?: {
-			/** A debug adapter may set 'restart' to true to request that the front end restarts the session. */
-			restart?: boolean;
+			/** A debug adapter may set 'restart' to true (or to an arbitrary object) to request that the front end restarts the session.
+				The value is not interpreted by the client and passed unmodified as an attribute '__restart' to the launchRequest.
+			*/
+			restart?: any;
 		};
 	}
 
@@ -224,7 +230,9 @@ declare module DebugProtocol {
 
 	/** Arguments for 'initialize' request. */
 	export interface InitializeRequestArguments {
-		/** The ID of the debugger adapter. Used to select or verify debugger adapter. */
+		/** The ID of the (frontend) client using this adapter. */
+		clientID?: string;
+		/** The ID of the debug adapter. */
 		adapterID: string;
 		/** If true all line numbers are 1-based (default). */
 		linesStartAt1?: boolean;
@@ -323,10 +331,13 @@ declare module DebugProtocol {
 		arguments?: DisconnectArguments;
 	}
 
-	/** Arguments for 'disconnect' request.
-		The disconnect request has no standardized attributes.
-	*/
+	/** Arguments for 'disconnect' request. */
 	export interface DisconnectArguments {
+		/** Indicates whether the debuggee should be terminated when the debugger is disconnected.
+			If unspecified, the debug adapter is free to do whatever it thinks is best.
+			A client can only rely on this attribute being properly honored if a debug adapter returns true for the 'supportTerminateDebuggee' capability.
+		*/
+		terminateDebuggee?: boolean;
 	}
 
 	/** Response to 'disconnect' request. This is just an acknowledgement, so no body field is required. */
@@ -395,7 +406,7 @@ declare module DebugProtocol {
 	}
 
 	/** SetExceptionBreakpoints request; value of command field is 'setExceptionBreakpoints'.
-		The request configures the debuggers response to thrown exceptions. If an execption is configured to break, a StoppedEvent is fired (event type 'exception').
+		The request configures the debuggers response to thrown exceptions. If an exception is configured to break, a StoppedEvent is fired (event type 'exception').
 	*/
 	export interface SetExceptionBreakpointsRequest extends Request {
 		// command: 'setExceptionBreakpoints';
@@ -696,6 +707,8 @@ declare module DebugProtocol {
 		name: string;
 		/** The value of the variable. */
 		value: string;
+		/** Specifies details on how to format the response value. */
+		format?: ValueFormat;
 	}
 
 	/** Response to 'setVariable' request. */
@@ -728,7 +741,9 @@ declare module DebugProtocol {
 
 	/** Arguments for 'source' request. */
 	export interface SourceArguments {
-		/** The reference to the source. This is the value received in Source.reference. */
+		/** Specifies the source content to load. Either source.path or source.sourceReference must be specified. */
+		source?: Source;
+		/** The reference to the source. This is the same as source.sourceReference. This is provided for backward compatibility since old backends do not understand the 'source' attribute. */
 		sourceReference: number;
 	}
 
@@ -903,6 +918,34 @@ declare module DebugProtocol {
 		};
 	}
 
+	/** ExceptionInfoRequest request; value of command field is 'exceptionInfo'.
+		Retrieves the details of the exception that caused the StoppedEvent to be raised.
+	*/
+	export interface ExceptionInfoRequest extends Request {
+		// command: 'exceptionInfo';
+		arguments: ExceptionInfoArguments;
+	}
+
+	/** Arguments for 'exceptionInfo' request. */
+	export interface ExceptionInfoArguments {
+		/** Thread for which exception information should be retrieved. */
+		threadId: number;
+	}
+
+	/** Response to 'exceptionInfo' request. */
+	export interface ExceptionInfoResponse extends Response {
+		body: {
+			/** ID of the exception that was thrown. */
+			exceptionId: string;
+			/** Descriptive text for the exception provided by the debug adapter. */
+			description?: string;
+			/** Mode that caused the exception notification to be raised. */
+			breakMode: ExceptionBreakMode;
+			/** Detailed information about the exception. */
+			details?: ExceptionDetails;
+		};
+	}
+
 	/** Information about the capabilities of a debug adapter. */
 	export interface Capabilities {
 		/** The debug adapter supports the configurationDoneRequest. */
@@ -941,6 +984,12 @@ declare module DebugProtocol {
 		supportsExceptionOptions?: boolean;
 		/** The debug adapter supports a 'format' attribute on the stackTraceRequest, variablesRequest, and evaluateRequest. */
 		supportsValueFormattingOptions?: boolean;
+		/** The debug adapter supports the exceptionInfo request. */
+		supportsExceptionInfoRequest?: boolean;
+		/** The debug adapter supports the 'terminateDebuggee' attribute on the 'disconnect' request. */
+		supportTerminateDebuggee?: boolean;
+		/** The debug adapter supports the delayed loading of parts of the stack, which requires that both the 'startFrame' and 'levels' arguments and the 'totalFrames' result of the 'StackTrace' request are supported. */
+		supportsDelayedStackTraceLoading?: boolean;
 	}
 
 	/** An ExceptionBreakpointsFilter is shown in the UI as an option for configuring how exceptions are dealt with. */
@@ -1076,6 +1125,8 @@ declare module DebugProtocol {
 		endColumn?: number;
 		/** The module associated with this frame, if any. */
 		moduleId?: number | string;
+		/** An optional hint for how to present this frame in the UI. A value of 'label' can be used to indicate that the frame is an artificial frame that is used as a visual label or separator. A value of 'subtle' can be used to change the appearance of a frame in a 'subtle' way. */
+		presentationHint?: 'normal' | 'label' | 'subtle';
 	}
 
 	/** A Scope is a named container for variables. Optionally a scope can map to a source or a range within a source. */
@@ -1212,10 +1263,13 @@ declare module DebugProtocol {
 		text?: string;
 		/** The item's type. Typically the client uses this information to render the item in the UI with an icon. */
 		type?: CompletionItemType;
-		/** When a completion is selected it replaces 'length' characters starting at 'start' in the text passed to the CompletionsRequest.
-			If missing the frontend will try to determine these values heuristically.
+		/** This value determines the location (in the CompletionsRequest's 'text' attribute) where the completion text is added.
+			If missing the text is added at the location specified by the CompletionsRequest's 'column' attribute.
 		*/
 		start?: number;
+		/** This value determines how many characters are overwritten by the completion text.
+			If missing the value 0 is assumed which results in the completion text being inserted.
+		*/
 		length?: number;
 	}
 
@@ -1253,6 +1307,8 @@ declare module DebugProtocol {
 		line?: boolean;
 		/** Displays the module of the stack frame. */
 		module?: boolean;
+		/** Includes all stack frames, including those the debug adapter might otherwise hide. */
+		includeAll?: boolean;
 	}
 
 	/** An ExceptionOptions assigns configuration options to a set of exceptions. */
@@ -1277,6 +1333,22 @@ declare module DebugProtocol {
 		negate?: boolean;
 		/** Depending on the value of 'negate' the names that should match or not match. */
 		names: string[];
+	}
+
+	/** Detailed information about an exception that has occurred. */
+	export interface ExceptionDetails {
+		/** Message contained in the exception. */
+		message?: string;
+		/** Short type name of the exception object. */
+		typeName?: string;
+		/** Fully-qualified type name of the exception object. */
+		fullTypeName?: string;
+		/** Optional expression that can be evaluated in the current scope to obtain the exception object. */
+		evaluateName?: string;
+		/** Stack trace at the time the exception was thrown. */
+		stackTrace?: string;
+		/** Details of the exception contained by this exception, if any. */
+		innerException?: ExceptionDetails[];
 	}
 }
 

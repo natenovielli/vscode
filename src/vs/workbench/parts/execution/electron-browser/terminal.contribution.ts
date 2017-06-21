@@ -6,14 +6,14 @@
 
 import nls = require('vs/nls');
 import { TPromise } from 'vs/base/common/winjs.base';
-import { Registry } from 'vs/platform/platform';
+import { Registry } from 'vs/platform/registry/common/platform';
 import baseplatform = require('vs/base/common/platform');
 import { IAction, Action } from 'vs/base/common/actions';
 import { IWorkbenchActionRegistry, Extensions as ActionExtensions } from 'vs/workbench/common/actionRegistry';
 import paths = require('vs/base/common/paths');
-import { Scope, IActionBarRegistry, Extensions as ActionBarExtensions, ActionBarContributor } from 'vs/workbench/browser/actionBarRegistry';
+import { Scope, IActionBarRegistry, Extensions as ActionBarExtensions, ActionBarContributor } from 'vs/workbench/browser/actions';
 import uri from 'vs/base/common/uri';
-import { asFileResource } from 'vs/workbench/parts/files/common/files';
+import { explorerItemToFileResource } from 'vs/workbench/parts/files/common/files';
 import { IWorkspaceContextService } from 'vs/platform/workspace/common/workspace';
 import { ITerminalService } from 'vs/workbench/parts/execution/common/execution';
 import { SyncActionDescriptor } from 'vs/platform/actions/common/actions';
@@ -24,6 +24,7 @@ import { KeyMod, KeyCode } from 'vs/base/common/keyCodes';
 import { Extensions, IConfigurationRegistry } from 'vs/platform/configuration/common/configurationRegistry';
 import { KEYBINDING_CONTEXT_TERMINAL_NOT_FOCUSED } from 'vs/workbench/parts/terminal/common/terminal';
 import { DEFAULT_TERMINAL_WINDOWS, DEFAULT_TERMINAL_LINUX_READY, DEFAULT_TERMINAL_OSX } from 'vs/workbench/parts/execution/electron-browser/terminal';
+import { IHistoryService } from "vs/workbench/services/history/common/history";
 
 DEFAULT_TERMINAL_LINUX_READY.then(defaultTerminalLinux => {
 	let configurationRegistry = <IConfigurationRegistry>Registry.as(Extensions.Configuration);
@@ -70,7 +71,8 @@ export class OpenConsoleAction extends Action {
 		label: string,
 		@ITerminalService private terminalService: ITerminalService,
 		@IWorkbenchEditorService private editorService: IWorkbenchEditorService,
-		@IWorkspaceContextService private contextService: IWorkspaceContextService
+		@IWorkspaceContextService private contextService: IWorkspaceContextService,
+		@IHistoryService private historyService: IHistoryService
 	) {
 		super(id, label);
 
@@ -86,8 +88,8 @@ export class OpenConsoleAction extends Action {
 		let pathToOpen: string;
 
 		// Try workspace path first
-		let workspace = this.contextService.getWorkspace();
-		pathToOpen = this.resource ? this.resource.fsPath : (workspace && workspace.resource.fsPath);
+		const root = this.historyService.getLastActiveWorkspaceRoot();
+		pathToOpen = this.resource ? this.resource.fsPath : (root && root.fsPath);
 
 		// Otherwise check if we have an active file open
 		if (!pathToOpen) {
@@ -103,22 +105,22 @@ export class OpenConsoleAction extends Action {
 	}
 }
 
-class FileViewerActionContributor extends ActionBarContributor {
+class ExplorerViewerActionContributor extends ActionBarContributor {
 
 	constructor( @IInstantiationService private instantiationService: IInstantiationService) {
 		super();
 	}
 
 	public hasSecondaryActions(context: any): boolean {
-		const element = context.element;
-		return !!asFileResource(element) || (element && element.getResource && element.getResource());
+		return !!explorerItemToFileResource(context.element);
 	}
 
 	public getSecondaryActions(context: any): IAction[] {
-		let fileResource = asFileResource(context.element);
-		let resource = fileResource ? fileResource.resource : context.element.getResource();
-		// If there is no file resource, it is an open editor and not a directory.
-		if (!fileResource || !fileResource.isDirectory) {
+		let fileResource = explorerItemToFileResource(context.element);
+		let resource = fileResource.resource;
+
+		// We want the parent unless this resource is a directory
+		if (!fileResource.isDirectory) {
 			resource = uri.file(paths.dirname(resource.fsPath));
 		}
 
@@ -129,11 +131,11 @@ class FileViewerActionContributor extends ActionBarContributor {
 	}
 }
 
-const actionBarRegistry = <IActionBarRegistry>Registry.as(ActionBarExtensions.Actionbar);
-actionBarRegistry.registerActionBarContributor(Scope.VIEWER, FileViewerActionContributor);
+const actionBarRegistry = Registry.as<IActionBarRegistry>(ActionBarExtensions.Actionbar);
+actionBarRegistry.registerActionBarContributor(Scope.VIEWER, ExplorerViewerActionContributor);
 
 // Register Global Action to Open Console
-(<IWorkbenchActionRegistry>Registry.as(ActionExtensions.WorkbenchActions)).registerWorkbenchAction(
+Registry.as<IWorkbenchActionRegistry>(ActionExtensions.WorkbenchActions).registerWorkbenchAction(
 	new SyncActionDescriptor(
 		OpenConsoleAction,
 		OpenConsoleAction.ID,
@@ -141,5 +143,5 @@ actionBarRegistry.registerActionBarContributor(Scope.VIEWER, FileViewerActionCon
 		{ primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KEY_C },
 		KEYBINDING_CONTEXT_TERMINAL_NOT_FOCUSED
 	),
-	'Open New Command Prompt'
+	baseplatform.isWindows ? 'Open New Command Prompt' : 'Open New Terminal'
 );

@@ -44,7 +44,25 @@ export class OpenGlobalKeybindingsAction extends Action {
 	}
 
 	public run(event?: any): TPromise<any> {
-		return this.preferencesService.openGlobalKeybindingSettings();
+		return this.preferencesService.openGlobalKeybindingSettings(false);
+	}
+}
+
+export class OpenGlobalKeybindingsFileAction extends Action {
+
+	public static ID = 'workbench.action.openGlobalKeybindingsFile';
+	public static LABEL = nls.localize('openGlobalKeybindingsFile', "Open Keyboard Shortcuts File");
+
+	constructor(
+		id: string,
+		label: string,
+		@IPreferencesService private preferencesService: IPreferencesService
+	) {
+		super(id, label);
+	}
+
+	public run(event?: any): TPromise<any> {
+		return this.preferencesService.openGlobalKeybindingSettings(true);
 	}
 }
 
@@ -69,7 +87,7 @@ export class OpenWorkspaceSettingsAction extends Action {
 export class ConfigureLanguageBasedSettingsAction extends Action {
 
 	public static ID = 'workbench.action.configureLanguageBasedSettings';
-	public static LABEL = nls.localize('configureLanguageBasedSettings', "Configure language specific settings...");
+	public static LABEL = nls.localize('configureLanguageBasedSettings', "Configure Language Specific Settings...");
 
 	constructor(
 		id: string,
@@ -109,6 +127,7 @@ export class ConfigureLanguageBasedSettingsAction extends Action {
 					return this.modeService.getOrCreateModeByLanguageName(pick.label)
 						.then(mode => this.preferencesService.configureSettingsForLanguage(mode.getLanguageIdentifier().language));
 				}
+				return undefined;
 			});
 
 	}

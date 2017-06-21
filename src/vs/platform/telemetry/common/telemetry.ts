@@ -15,11 +15,15 @@ export interface ITelemetryInfo {
 	instanceId: string;
 }
 
+export interface ITelemetryData {
+	from?: string;
+	target?: string;
+	[key: string]: any;
+}
+
 export interface ITelemetryExperiments {
-	showNewUserWatermark: boolean;
-	openUntitledFile: boolean;
-	openGettingStarted?: boolean;
-	enableWelcomePage: boolean;
+	mergeQuickLinks: boolean;
+	showTaskDocumentation: boolean;
 }
 
 export interface ITelemetryService {
@@ -30,7 +34,7 @@ export interface ITelemetryService {
 	 * Sends a telemetry event that has been privacy approved.
 	 * Do not call this unless you have been given approval.
 	 */
-	publicLog(eventName: string, data?: any): TPromise<void>;
+	publicLog(eventName: string, data?: ITelemetryData): TPromise<void>;
 
 	getTelemetryInfo(): TPromise<ITelemetryInfo>;
 

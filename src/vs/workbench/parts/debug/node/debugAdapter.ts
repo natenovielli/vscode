@@ -12,7 +12,7 @@ import * as objects from 'vs/base/common/objects';
 import * as paths from 'vs/base/common/paths';
 import * as platform from 'vs/base/common/platform';
 import { IJSONSchema, IJSONSchemaSnippet } from 'vs/base/common/jsonSchema';
-import { IRawAdapter, IAdapterExecutable } from 'vs/workbench/parts/debug/common/debug';
+import { IRawAdapter, IAdapterExecutable, INTERNAL_CONSOLE_OPTIONS_SCHEMA } from 'vs/workbench/parts/debug/common/debug';
 import { IExtensionDescription } from 'vs/platform/extensions/common/extensions';
 import { IConfigurationResolverService } from 'vs/workbench/services/configurationResolver/common/configurationResolver';
 import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
@@ -77,7 +77,8 @@ export class Adapter {
 			}
 		}
 
-		return TPromise.wrapError(new Error(nls.localize('debugAdapterCannotDetermineExecutable', "Cannot determine executable for debug adapter '{0}'.", details.command)));
+		return TPromise.wrapError(new Error(nls.localize({ key: 'debugAdapterCannotDetermineExecutable', comment: ['Adapter executable file not found'] },
+			"Cannot determine executable for debug adapter '{0}'.", details.command)));
 	}
 
 	private getRuntime(): string {
@@ -180,7 +181,10 @@ export class Adapter {
 			const properties = attributes.properties;
 			properties['type'] = {
 				enum: [this.type],
-				description: nls.localize('debugType', "Type of configuration.")
+				description: nls.localize('debugType', "Type of configuration."),
+				pattern: '^(?!node2)',
+				errorMessage: nls.localize('debugTypeNotRecognised', "The debug type is not recognized. Make sure that you have a corresponding debug extension installed and that it is enabled."),
+				patternErrorMessage: nls.localize('node2NotSupported', "\"node2\" is no longer supported, use \"node\" instead and set the \"protocol\" attribute to \"inspector\".")
 			};
 			properties['name'] = {
 				type: 'string',
@@ -193,18 +197,15 @@ export class Adapter {
 			};
 			properties['debugServer'] = {
 				type: 'number',
-				description: nls.localize('debugServer', "For debug extension development only: if a port is specified VS Code tries to connect to a debug adapter running in server mode")
+				description: nls.localize('debugServer', "For debug extension development only: if a port is specified VS Code tries to connect to a debug adapter running in server mode"),
+				default: 4711
 			};
 			properties['preLaunchTask'] = {
 				type: ['string', 'null'],
 				default: null,
 				description: nls.localize('debugPrelaunchTask', "Task to run before debug session starts.")
 			};
-			properties['internalConsoleOptions'] = {
-				enum: ['neverOpen', 'openOnSessionStart', 'openOnFirstSessionStart'],
-				default: 'openOnFirstSessionStart',
-				description: nls.localize('internalConsoleOptions', "Controls behavior of the internal debug console.")
-			};
+			properties['internalConsoleOptions'] = INTERNAL_CONSOLE_OPTIONS_SCHEMA;
 
 			const osProperties = objects.deepClone(properties);
 			properties['windows'] = {
@@ -222,6 +223,12 @@ export class Adapter {
 				description: nls.localize('debugLinuxConfiguration', "Linux specific launch configuration attributes."),
 				properties: osProperties
 			};
+			Object.keys(attributes.properties).forEach(name => {
+				// Use schema allOf property to get independent error reporting #21113
+				attributes.properties[name].pattern = attributes.properties[name].pattern || '^(?!.*\\$\\{(env|config|command)\\.)';
+				attributes.properties[name].patternErrorMessage = attributes.properties[name].patternErrorMessage ||
+					nls.localize('deprecatedVariables', "'env.', 'config.' and 'command.' are deprecated, use 'env:', 'config:' and 'command:' instead.");
+			});
 
 			return attributes;
 		});

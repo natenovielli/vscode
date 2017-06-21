@@ -11,7 +11,6 @@ import lifecycle = require('vs/base/common/lifecycle');
 import { Promise } from 'vs/base/common/winjs.base';
 import { Builder, $ } from 'vs/base/browser/builder';
 import { SelectBox } from 'vs/base/browser/ui/selectBox/selectBox';
-import platform = require('vs/base/common/platform');
 import { IAction, IActionRunner, Action, IActionChangeEvent, ActionRunner } from 'vs/base/common/actions';
 import DOM = require('vs/base/browser/dom');
 import { EventType as CommonEventType } from 'vs/base/common/events';
@@ -26,7 +25,7 @@ export interface IActionItem extends IEventEmitter {
 	setActionContext(context: any): void;
 	render(element: HTMLElement): void;
 	isEnabled(): boolean;
-	focus(): void;
+	focus(fromRight?: boolean): void;
 	blur(): void;
 	dispose(): void;
 }
@@ -118,16 +117,12 @@ export class BaseActionItem extends EventEmitter implements IActionItem {
 
 		this.builder.on(EventType.Tap, e => this.onClick(e));
 
-		if (platform.isMacintosh) {
-			this.builder.on(DOM.EventType.CONTEXT_MENU, (event: Event) => this.onClick(event)); // https://github.com/Microsoft/vscode/issues/1011
-		}
-
 		this.builder.on(DOM.EventType.MOUSE_DOWN, (e: MouseEvent) => {
 			if (!enableDragging) {
 				DOM.EventHelper.stop(e); // do not run when dragging is on because that would disable it
 			}
 
-			if (this._action.enabled) {
+			if (this._action.enabled && e.button === 0) {
 				this.builder.addClass('active');
 			}
 		});
@@ -223,6 +218,7 @@ export interface IActionItemOptions extends IBaseActionItemOptions {
 	icon?: boolean;
 	label?: boolean;
 	keybinding?: string;
+	isMenu?: boolean;
 }
 
 export class ActionItem extends BaseActionItem {
@@ -244,7 +240,11 @@ export class ActionItem extends BaseActionItem {
 		super.render(container);
 
 		this.$e = $('a.action-label').appendTo(this.builder);
-		this.$e.attr({ role: 'button' });
+		if (this.options.isMenu) {
+			this.$e.attr({ role: 'menuitem' });
+		} else {
+			this.$e.attr({ role: 'button' });
+		}
 
 		if (this.options.label && this.options.keybinding) {
 			$('span.keybinding').text(this.options.keybinding).appendTo(this.builder);
@@ -348,6 +348,7 @@ export interface IActionBarOptions {
 	actionRunner?: IActionRunner;
 	ariaLabel?: string;
 	animated?: boolean;
+	isMenu?: boolean;
 }
 
 let defaultOptions: IActionBarOptions = {
@@ -390,7 +391,7 @@ export class ActionBar extends EventEmitter implements IActionRunner {
 			this.toDispose.push(this._actionRunner);
 		}
 
-		this.toDispose.push(this.addEmitter2(this._actionRunner));
+		this.toDispose.push(this.addEmitter(this._actionRunner));
 
 		this.items = [];
 		this.focusedItem = undefined;
@@ -463,7 +464,11 @@ export class ActionBar extends EventEmitter implements IActionRunner {
 
 		this.actionsList = document.createElement('ul');
 		this.actionsList.className = 'actions-container';
-		this.actionsList.setAttribute('role', 'toolbar');
+		if (this.options.isMenu) {
+			this.actionsList.setAttribute('role', 'menubar');
+		} else {
+			this.actionsList.setAttribute('role', 'toolbar');
+		}
 		if (this.options.ariaLabel) {
 			this.actionsList.setAttribute('aria-label', this.options.ariaLabel);
 		}
@@ -538,7 +543,7 @@ export class ActionBar extends EventEmitter implements IActionRunner {
 
 			item.actionRunner = this._actionRunner;
 			item.setActionContext(this.context);
-			this.addEmitter2(item);
+			this.addEmitter(item);
 			item.render(actionItemElement);
 
 			if (index === null || index < 0 || index >= this.actionsList.children.length) {
@@ -559,8 +564,7 @@ export class ActionBar extends EventEmitter implements IActionRunner {
 	}
 
 	public clear(): void {
-		// Do not dispose action items if they were provided from outside
-		this.items = this.options.actionItemProvider ? [] : lifecycle.dispose(this.items);
+		this.items = lifecycle.dispose(this.items);
 		$(this.actionsList).empty();
 	}
 
@@ -622,10 +626,10 @@ export class ActionBar extends EventEmitter implements IActionRunner {
 			this.focusedItem = undefined;
 		}
 
-		this.updateFocus();
+		this.updateFocus(true);
 	}
 
-	private updateFocus(): void {
+	private updateFocus(fromRight?: boolean): void {
 		if (typeof this.focusedItem === 'undefined') {
 			this.domNode.focus();
 			return;
@@ -638,7 +642,7 @@ export class ActionBar extends EventEmitter implements IActionRunner {
 
 			if (i === this.focusedItem) {
 				if (types.isFunction(actionItem.focus)) {
-					actionItem.focus();
+					actionItem.focus(fromRight);
 				}
 			} else {
 				if (types.isFunction(actionItem.blur)) {
@@ -693,7 +697,7 @@ export class ActionBar extends EventEmitter implements IActionRunner {
 }
 
 export class SelectActionItem extends BaseActionItem {
-	private selectBox: SelectBox;
+	protected selectBox: SelectBox;
 	protected toDispose: lifecycle.IDisposable[];
 
 	constructor(ctx: any, action: IAction, options: string[], selected: number) {

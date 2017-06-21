@@ -16,12 +16,13 @@ export interface TocEntry {
 	location: vscode.Location;
 }
 
-export class TableOfContentProvider {
+export class TableOfContentsProvider {
 	private toc: TocEntry[];
 
 	public constructor(
 		private engine: MarkdownEngine,
-		private document: vscode.TextDocument) { }
+		private document: vscode.TextDocument
+	) { }
 
 	public getToc(): TocEntry[] {
 		if (!this.toc) {
@@ -35,7 +36,7 @@ export class TableOfContentProvider {
 	}
 
 	public lookup(fragment: string): number {
-		const slug = TableOfContentProvider.slugify(fragment);
+		const slug = TableOfContentsProvider.slugify(fragment);
 		for (const entry of this.getToc()) {
 			if (entry.slug === slug) {
 				return entry.line;
@@ -44,18 +45,18 @@ export class TableOfContentProvider {
 		return NaN;
 	}
 
-	private buildToc(document: vscode.TextDocument): any {
+	private buildToc(document: vscode.TextDocument): TocEntry[] {
 		const toc: TocEntry[] = [];
-		const tokens: IToken[] = this.engine.parse(this.document.getText());
+		const tokens: IToken[] = this.engine.parse(document.uri, document.getText());
 
 		for (const heading of tokens.filter(token => token.type === 'heading_open')) {
 			const lineNumber = heading.map[0];
 			const line = document.lineAt(lineNumber);
-			const href = TableOfContentProvider.slugify(line.text);
+			const href = TableOfContentsProvider.slugify(line.text);
 			if (href) {
 				toc.push({
 					slug: href,
-					text: TableOfContentProvider.getHeaderText(line.text),
+					text: TableOfContentsProvider.getHeaderText(line.text),
 					line: lineNumber,
 					location: new vscode.Location(document.uri, line.range)
 				});
@@ -65,13 +66,16 @@ export class TableOfContentProvider {
 	}
 
 	private static getHeaderText(header: string): string {
-		return header.replace(/^\s*(#)+\s*(.*?)\s*\1*$/, '$2').trim();
+		return header.replace(/^\s*(#+)\s*(.*?)\s*\1*$/, (_, level, word) => `${level} ${word.trim()}`);
 	}
 
 	public static slugify(header: string): string {
-		return encodeURI(TableOfContentProvider.getHeaderText(header)
+		return encodeURI(header.trim()
 			.toLowerCase()
-			.replace(/\s/g, '-'));
+			.replace(/[\]\[\!\"\#\$\%\&\'\(\)\*\+\,\.\/\:\;\<\=\>\?\@\\\^\_\{\|\}\~]/g, '')
+			.replace(/\s+/g, '-')
+			.replace(/^\-+/, '')
+			.replace(/\-+$/, ''));
 	}
 }
 

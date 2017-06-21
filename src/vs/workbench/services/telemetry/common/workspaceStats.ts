@@ -8,7 +8,6 @@
 import winjs = require('vs/base/common/winjs.base');
 import errors = require('vs/base/common/errors');
 import URI from 'vs/base/common/uri';
-import { ArraySet } from 'vs/base/common/set';
 import { IFileService } from 'vs/platform/files/common/files';
 import { ITelemetryService } from 'vs/platform/telemetry/common/telemetry';
 import { IWorkspaceContextService } from 'vs/platform/workspace/common/workspace';
@@ -60,12 +59,12 @@ function extractDomain(url: string): string {
 }
 
 export function getDomainsOfRemotes(text: string, whitelist: string[]): string[] {
-	let domains = new ArraySet<string>();
+	let domains = new Set<string>();
 	let match: RegExpExecArray;
 	while (match = RemoteMatcher.exec(text)) {
 		let domain = extractDomain(match[1]);
 		if (domain) {
-			domains.set(domain);
+			domains.add(domain);
 		}
 	}
 
@@ -74,7 +73,10 @@ export function getDomainsOfRemotes(text: string, whitelist: string[]): string[]
 		return map;
 	}, Object.create(null));
 
-	return domains.elements
+	const elements: string[] = [];
+	domains.forEach(e => elements.push(e));
+
+	return elements
 		.map(key => whitemap[key] ? key : key.replace(AnyButDot, 'a'));
 }
 
@@ -99,10 +101,11 @@ export class WorkspaceStats {
 		tags['workbench.filesToCreate'] = filesToCreate && filesToCreate.length || undefined;
 		tags['workbench.filesToDiff'] = filesToDiff && filesToDiff.length || undefined;
 
-		const workspace = this.contextService.getWorkspace();
+		const workspace = this.contextService.getWorkspace2();
+		tags['workspace.roots'] = workspace ? workspace.roots.length : 0;
 		tags['workspace.empty'] = !workspace;
 
-		const folder = workspace ? workspace.resource : this.environmentService.appQuality !== 'stable' && this.findFolder(workbenchOptions);
+		const folder = workspace ? workspace.roots[0] /* TODO@Christof https://github.com/Microsoft/vscode/issues/29085 */ : this.environmentService.appQuality !== 'stable' && this.findFolder(workbenchOptions);
 		if (folder && this.fileService) {
 			return this.fileService.resolveFile(folder).then(stats => {
 				let names = (stats.children || []).map(c => c.name);
@@ -183,6 +186,7 @@ export class WorkspaceStats {
 		} else if (filesToDiff && filesToDiff.length) {
 			return this.parentURI(filesToDiff[0].resource);
 		}
+		return undefined;
 	}
 
 	private parentURI(uri: URI): URI {
@@ -198,7 +202,8 @@ export class WorkspaceStats {
 	}
 
 	private reportRemotes(workspaceUri: URI): void {
-		let uri = workspaceUri.with({ path: `${workspaceUri.path}/.git/config` });
+		let path = workspaceUri.path;
+		let uri = workspaceUri.with({ path: `${path !== '/' ? path : ''}/.git/config` });
 		this.fileService.resolveContent(uri, { acceptTextOnly: true }).then(
 			content => {
 				let domains = getDomainsOfRemotes(content.value, SecondLevelDomainWhitelist);
@@ -212,7 +217,8 @@ export class WorkspaceStats {
 
 	private reportAzureNode(workspaceUri: URI, tags: Tags): winjs.TPromise<Tags> {
 		// TODO: should also work for `node_modules` folders several levels down
-		let uri = workspaceUri.with({ path: `${workspaceUri.path}/node_modules` });
+		let path = workspaceUri.path;
+		let uri = workspaceUri.with({ path: `${path !== '/' ? path : ''}/node_modules` });
 		return this.fileService.resolveFile(uri).then(
 			stats => {
 				let names = (stats.children || []).map(c => c.name);
@@ -228,7 +234,8 @@ export class WorkspaceStats {
 	}
 
 	private reportAzureJava(workspaceUri: URI, tags: Tags): winjs.TPromise<Tags> {
-		let uri = workspaceUri.with({ path: `${workspaceUri.path}/pom.xml` });
+		let path = workspaceUri.path;
+		let uri = workspaceUri.with({ path: `${path !== '/' ? path : ''}/pom.xml` });
 		return this.fileService.resolveContent(uri, { acceptTextOnly: true }).then(
 			content => {
 				let referencesAzure = content.value.match(/azure/i) !== null;
@@ -255,8 +262,8 @@ export class WorkspaceStats {
 	}
 
 	public reportCloudStats(): void {
-		const workspace = this.contextService.getWorkspace();
-		let uri = workspace ? workspace.resource : null;
+		const workspace = this.contextService.getWorkspace2();
+		let uri = workspace ? workspace.roots[0] : null; // TODO@Christof https://github.com/Microsoft/vscode/issues/29085
 		if (uri && this.fileService) {
 			this.reportRemotes(uri);
 			this.reportAzure(uri);

@@ -20,7 +20,7 @@ import { IConfigurationResolverService } from 'vs/workbench/services/configurati
 
 import { IWorkspaceContextService } from 'vs/platform/workspace/common/workspace';
 
-import * as FileConfig from './processRunnerConfiguration';
+import * as TaskConfig from '../common/taskConfiguration';
 
 let build: string = 'build';
 let test: string = 'test';
@@ -109,7 +109,7 @@ class GruntTaskMatcher implements TaskDetectorMatcher {
 }
 
 export interface DetectorResult {
-	config: FileConfig.ExternalTaskRunnerConfiguration;
+	config: TaskConfig.ExternalTaskRunnerConfiguration;
 	stdout: string[];
 	stderr: string[];
 }
@@ -143,20 +143,19 @@ export class ProcessRunnerDetector {
 	private fileService: IFileService;
 	private contextService: IWorkspaceContextService;
 	private configurationResolverService: IConfigurationResolverService;
-	private taskConfiguration: FileConfig.ExternalTaskRunnerConfiguration;
+	private taskConfiguration: TaskConfig.ExternalTaskRunnerConfiguration;
 	private _stderr: string[];
 	private _stdout: string[];
 	private _cwd: string;
 
-	constructor(fileService: IFileService, contextService: IWorkspaceContextService, configurationResolverService: IConfigurationResolverService, config: FileConfig.ExternalTaskRunnerConfiguration = null) {
+	constructor(fileService: IFileService, contextService: IWorkspaceContextService, configurationResolverService: IConfigurationResolverService, config: TaskConfig.ExternalTaskRunnerConfiguration = null) {
 		this.fileService = fileService;
 		this.contextService = contextService;
 		this.configurationResolverService = configurationResolverService;
 		this.taskConfiguration = config;
 		this._stderr = [];
 		this._stdout = [];
-		const workspace = this.contextService.getWorkspace();
-		this._cwd = workspace ? Paths.normalize(workspace.resource.fsPath, true) : '';
+		this._cwd = this.contextService.hasWorkspace() ? Paths.normalize(this.contextService.getWorkspace().resource.fsPath, true) : '';
 	}
 
 	public get stderr(): string[] {
@@ -225,27 +224,27 @@ export class ProcessRunnerDetector {
 		return result;
 	}
 
-	private tryDetectGulp(list: boolean): TPromise<{ config: FileConfig.ExternalTaskRunnerConfiguration; stderr: string[]; }> {
+	private tryDetectGulp(list: boolean): TPromise<DetectorResult> {
 		return this.fileService.resolveFile(this.contextService.toResource('gulpfile.js')).then((stat) => {
 			let config = ProcessRunnerDetector.detectorConfig('gulp');
 			let process = new LineProcess('gulp', [config.arg, '--no-color'], true, { cwd: this._cwd });
 			return this.runDetection(process, 'gulp', true, config.matcher, ProcessRunnerDetector.DefaultProblemMatchers, list);
-		}, (err: any): FileConfig.ExternalTaskRunnerConfiguration => {
+		}, (err: any): TaskConfig.ExternalTaskRunnerConfiguration => {
 			return null;
 		});
 	}
 
-	private tryDetectGrunt(list: boolean): TPromise<{ config: FileConfig.ExternalTaskRunnerConfiguration; stderr: string[]; }> {
+	private tryDetectGrunt(list: boolean): TPromise<DetectorResult> {
 		return this.fileService.resolveFile(this.contextService.toResource('Gruntfile.js')).then((stat) => {
 			let config = ProcessRunnerDetector.detectorConfig('grunt');
 			let process = new LineProcess('grunt', [config.arg, '--no-color'], true, { cwd: this._cwd });
 			return this.runDetection(process, 'grunt', true, config.matcher, ProcessRunnerDetector.DefaultProblemMatchers, list);
-		}, (err: any): FileConfig.ExternalTaskRunnerConfiguration => {
+		}, (err: any): TaskConfig.ExternalTaskRunnerConfiguration => {
 			return null;
 		});
 	}
 
-	private tryDetectJake(list: boolean): TPromise<{ config: FileConfig.ExternalTaskRunnerConfiguration; stderr: string[]; }> {
+	private tryDetectJake(list: boolean): TPromise<DetectorResult> {
 		let run = () => {
 			let config = ProcessRunnerDetector.detectorConfig('jake');
 			let process = new LineProcess('jake', [config.arg], true, { cwd: this._cwd });
@@ -256,7 +255,7 @@ export class ProcessRunnerDetector {
 		}, (err: any) => {
 			return this.fileService.resolveFile(this.contextService.toResource('Jakefile.js')).then((stat) => {
 				return run();
-			}, (err: any): FileConfig.ExternalTaskRunnerConfiguration => {
+			}, (err: any): TaskConfig.ExternalTaskRunnerConfiguration => {
 				return null;
 			});
 		});
@@ -276,7 +275,7 @@ export class ProcessRunnerDetector {
 				}
 				return { config: null, stdout: this._stdout, stderr: this._stderr };
 			}
-			let result: FileConfig.ExternalTaskRunnerConfiguration = {
+			let result: TaskConfig.ExternalTaskRunnerConfiguration = {
 				version: ProcessRunnerDetector.Version,
 				command: command,
 				isShellCommand: isShellCommand
@@ -314,14 +313,13 @@ export class ProcessRunnerDetector {
 		});
 	}
 
-	private createTaskDescriptions(tasks: string[], problemMatchers: string[], list: boolean): FileConfig.TaskDescription[] {
-		let taskConfigs: FileConfig.TaskDescription[] = [];
+	private createTaskDescriptions(tasks: string[], problemMatchers: string[], list: boolean): TaskConfig.TaskDescription[] {
+		let taskConfigs: TaskConfig.TaskDescription[] = [];
 		if (list) {
 			tasks.forEach((task) => {
 				taskConfigs.push({
 					taskName: task,
-					args: [],
-					isWatching: false
+					args: []
 				});
 			});
 		} else {
@@ -340,7 +338,6 @@ export class ProcessRunnerDetector {
 					taskName: name,
 					args: [],
 					isBuildCommand: true,
-					isWatching: false,
 					problemMatcher: problemMatchers
 				});
 			}

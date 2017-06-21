@@ -7,10 +7,14 @@
 
 import * as vscode from 'vscode';
 import * as ts from 'typescript';
+import { PackageDocument } from './packageDocumentHelper';
 
 export function activate(context: vscode.ExtensionContext) {
 	const registration = vscode.languages.registerDocumentLinkProvider({ language: 'typescript', pattern: '**/vscode.d.ts' }, _linkProvider);
 	context.subscriptions.push(registration);
+
+	//package.json suggestions
+	context.subscriptions.push(registerPackageDocumentCompletions());
 }
 
 const _linkProvider = new class implements vscode.DocumentLinkProvider {
@@ -19,7 +23,7 @@ const _linkProvider = new class implements vscode.DocumentLinkProvider {
 	private _linkPattern = /[^!]\[.*?\]\(#(.*?)\)/g;
 
 	provideDocumentLinks(document: vscode.TextDocument, token: vscode.CancellationToken): vscode.DocumentLink[] {
-		const {version} = document;
+		const { version } = document;
 		if (!this._cachedResult || this._cachedResult.version !== version) {
 			const links = this._computeDocumentLinks(document);
 			this._cachedResult = { version, links };
@@ -70,7 +74,7 @@ namespace ast {
 		const spans: number[] = [];
 
 		ts.forEachChild(sourceFile, function visit(node: ts.Node) {
-			const declIdent = (<ts.Declaration>node).name;
+			const declIdent = (<ts.NamedDeclaration>node).name;
 			if (declIdent && declIdent.kind === ts.SyntaxKind.Identifier) {
 				identifiers.push((<ts.Identifier>declIdent).text);
 				spans.push(node.pos, node.end);
@@ -100,4 +104,12 @@ namespace ast {
 			return start;
 		};
 	}
+}
+
+function registerPackageDocumentCompletions(): vscode.Disposable {
+	return vscode.languages.registerCompletionItemProvider({ language: 'json', pattern: '**/package.json' }, {
+		provideCompletionItems(document, position, token) {
+			return new PackageDocument(document).provideCompletionItems(position, token);
+		}
+	});
 }

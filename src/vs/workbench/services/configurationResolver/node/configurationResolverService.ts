@@ -13,6 +13,7 @@ import { IConfigurationResolverService } from 'vs/workbench/services/configurati
 import { IEnvironmentService } from 'vs/platform/environment/common/environment';
 import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
 import { ICommandService } from 'vs/platform/commands/common/commands';
+import { ICommonCodeEditor } from 'vs/editor/common/editorCommon';
 import { IWorkbenchEditorService } from 'vs/workbench/services/editor/common/editorService';
 import { toResource } from 'vs/workbench/common/editor';
 
@@ -32,7 +33,7 @@ export class ConfigurationResolverService implements IConfigurationResolverServi
 		this._workspaceRoot = paths.normalize(workspaceRoot ? workspaceRoot.fsPath : '', true);
 		this._execPath = environmentService.execPath;
 		Object.keys(envVariables).forEach(key => {
-			this[`env.${key}`] = envVariables[key];
+			this[`env:${key}`] = envVariables[key];
 		});
 	}
 
@@ -75,6 +76,19 @@ export class ConfigurationResolverService implements IConfigurationResolverServi
 
 	private get fileExtname(): string {
 		return paths.extname(this.getFilePath());
+	}
+
+	private get lineNumber(): string {
+		const activeEditor = this.editorService.getActiveEditor();
+		if (activeEditor) {
+			const editorControl = (<ICommonCodeEditor>activeEditor.getControl());
+			if (editorControl) {
+				const lineNumber = editorControl.getSelection().positionLineNumber;
+				return String(lineNumber);
+			}
+		}
+
+		return '';
 	}
 
 	private getFilePath(): string {
@@ -125,7 +139,7 @@ export class ConfigurationResolverService implements IConfigurationResolverServi
 			if (types.isString(newValue)) {
 				return newValue;
 			} else {
-				return match && match.indexOf('env.') > 0 ? '' : match;
+				return match && match.indexOf('env:') > 0 ? '' : match;
 			}
 		});
 
@@ -133,9 +147,8 @@ export class ConfigurationResolverService implements IConfigurationResolverServi
 	}
 
 	private resolveConfigVariable(value: string, originalValue: string): string {
-		let regexp = /\$\{config\.(.+?)\}/g;
-		return value.replace(regexp, (match: string, name: string) => {
-			let config = this.configurationService.getConfiguration();
+		const replacer = (match: string, name: string) => {
+			let config = this.configurationService.getConfiguration<any>();
 			let newValue: any;
 			try {
 				const keys: string[] = name.split('.');
@@ -159,7 +172,9 @@ export class ConfigurationResolverService implements IConfigurationResolverServi
 			} else {
 				return this.resolve(newValue) + '';
 			}
-		});
+		};
+
+		return value.replace(/\$\{config:(.+?)\}/g, replacer);
 	}
 
 	private resolveLiteral(values: IStringDictionary<string | IStringDictionary<string> | string[]>): IStringDictionary<string | IStringDictionary<string> | string[]> {
@@ -199,14 +214,14 @@ export class ConfigurationResolverService implements IConfigurationResolverServi
 		}
 
 		// We need a map from interactive variables to keys because we only want to trigger an command once per key -
-		// even though it might occure multiple times in configuration #7026.
+		// even though it might occur multiple times in configuration #7026.
 		const interactiveVariablesToSubstitutes: { [interactiveVariable: string]: { object: any, key: string }[] } = {};
 		const findInteractiveVariables = (object: any) => {
 			Object.keys(object).forEach(key => {
 				if (object[key] && typeof object[key] === 'object') {
 					findInteractiveVariables(object[key]);
 				} else if (typeof object[key] === 'string') {
-					const matches = /\${command.(.+)}/.exec(object[key]);
+					const matches = /\${command:(.+)}/.exec(object[key]);
 					if (matches && matches.length === 2) {
 						const interactiveVariable = matches[1];
 						if (!interactiveVariablesToSubstitutes[interactiveVariable]) {
@@ -231,9 +246,11 @@ export class ConfigurationResolverService implements IConfigurationResolverServi
 
 				return this.commandService.executeCommand<string>(commandId, configuration).then(result => {
 					if (result) {
-						interactiveVariablesToSubstitutes[interactiveVariable].forEach(substitute =>
-							substitute.object[substitute.key] = substitute.object[substitute.key].replace(`\${command.${interactiveVariable}}`, result)
-						);
+						interactiveVariablesToSubstitutes[interactiveVariable].forEach(substitute => {
+							if (substitute.object[substitute.key].indexOf(`\${command:${interactiveVariable}}`) >= 0) {
+								substitute.object[substitute.key] = substitute.object[substitute.key].replace(`\${command:${interactiveVariable}}`, result);
+							}
+						});
 					} else {
 						substitionCanceled = true;
 					}

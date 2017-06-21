@@ -3,16 +3,16 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-'use strict';
-
 import { HoverProvider, Hover, TextDocument, Position, Range, CancellationToken } from 'vscode';
 
 import * as Proto from '../protocol';
 import { ITypescriptServiceClient } from '../typescriptService';
+import { tagsMarkdownPreview } from "./previewer";
 
 export default class TypeScriptHoverProvider implements HoverProvider {
 
-	public constructor(private client: ITypescriptServiceClient) { }
+	public constructor(
+		private client: ITypescriptServiceClient) { }
 
 	public provideHover(document: TextDocument, position: Position, token: CancellationToken): Promise<Hover | undefined | null> {
 		const filepath = this.client.normalizePath(document.uri);
@@ -24,19 +24,24 @@ export default class TypeScriptHoverProvider implements HoverProvider {
 			line: position.line + 1,
 			offset: position.character + 1
 		};
-		if (!args.file) {
-			return Promise.resolve(null);
-		}
 		return this.client.execute('quickinfo', args, token).then((response): Hover | undefined => {
 			if (response && response.body) {
 				const data = response.body;
 				return new Hover(
-					[{ language: 'typescript', value: data.displayString }, data.documentation],
+					TypeScriptHoverProvider.getContents(data),
 					new Range(data.start.line - 1, data.start.offset - 1, data.end.line - 1, data.end.offset - 1));
 			}
-		}, (err) => {
-			this.client.error(`'quickinfo' request failed with error.`, err);
+			return undefined;
+		}, () => {
 			return null;
 		});
+	}
+
+	private static getContents(data: Proto.QuickInfoResponseBody) {
+		const tags = tagsMarkdownPreview(data.tags);
+		return [
+			{ language: 'typescript', value: data.displayString },
+			data.documentation + (tags ? '\n\n' + tags : '')
+		];
 	}
 }

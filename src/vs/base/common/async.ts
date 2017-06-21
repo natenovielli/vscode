@@ -9,7 +9,7 @@ import * as errors from 'vs/base/common/errors';
 import * as platform from 'vs/base/common/platform';
 import { Promise, TPromise, ValueCallback, ErrorCallback, ProgressCallback } from 'vs/base/common/winjs.base';
 import { CancellationToken, CancellationTokenSource } from 'vs/base/common/cancellation';
-import { Disposable } from 'vs/base/common/lifecycle';
+import { Disposable, IDisposable } from 'vs/base/common/lifecycle';
 import Event, { Emitter } from 'vs/base/common/event';
 
 function isThenable<T>(obj: any): obj is Thenable<T> {
@@ -46,10 +46,11 @@ export function asWinJsPromise<T>(callback: (token: CancellationToken) => T | TP
 export function wireCancellationToken<T>(token: CancellationToken, promise: TPromise<T>, resolveAsUndefinedWhenCancelled?: boolean): Thenable<T> {
 	const subscription = token.onCancellationRequested(() => promise.cancel());
 	if (resolveAsUndefinedWhenCancelled) {
-		promise = promise.then(undefined, err => {
+		promise = promise.then<T>(undefined, err => {
 			if (!errors.isPromiseCanceledError(err)) {
 				return TPromise.wrapError(err);
 			}
+			return undefined;
 		});
 	}
 	return always(promise, () => subscription.dispose());
@@ -144,7 +145,7 @@ export class Throttler {
 // TODO@Joao: can the previous throttler be replaced with this?
 export class SimpleThrottler {
 
-	private current = TPromise.as(null);
+	private current = TPromise.as<any>(null);
 
 	queue<T>(promiseTask: ITask<TPromise<T>>): TPromise<T> {
 		return this.current = this.current.then(() => promiseTask());
@@ -498,6 +499,11 @@ export class Queue<T> extends Limiter<T> {
 	constructor() {
 		super(1);
 	}
+}
+
+export function setDisposableTimeout(handler: Function, timeout: number, ...args: any[]): IDisposable {
+	const handle = setTimeout(handler, timeout, ...args);
+	return { dispose() { clearTimeout(handle); } };
 }
 
 export class TimeoutTimer extends Disposable {

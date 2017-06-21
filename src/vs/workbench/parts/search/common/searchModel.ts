@@ -11,19 +11,19 @@ import { RunOnceScheduler } from 'vs/base/common/async';
 import { IDisposable, Disposable } from 'vs/base/common/lifecycle';
 import { TPromise, PPromise } from 'vs/base/common/winjs.base';
 import URI from 'vs/base/common/uri';
-import { LinkedMap } from 'vs/base/common/map';
-import { ArraySet } from 'vs/base/common/set';
+import { values, ResourceMap } from 'vs/base/common/map';
 import Event, { Emitter, fromPromise, stopwatch, any } from 'vs/base/common/event';
 import { ISearchService, ISearchProgressItem, ISearchComplete, ISearchQuery, IPatternInfo, IFileMatch } from 'vs/platform/search/common/search';
 import { ReplacePattern } from 'vs/platform/search/common/replace';
 import { ITelemetryService } from 'vs/platform/telemetry/common/telemetry';
 import { Range } from 'vs/editor/common/core/range';
-import { IModel, IModelDeltaDecoration, OverviewRulerLane, TrackedRangeStickiness, IModelDecorationOptions, FindMatch } from 'vs/editor/common/editorCommon';
+import { IModel, IModelDeltaDecoration, OverviewRulerLane, TrackedRangeStickiness, FindMatch } from 'vs/editor/common/editorCommon';
 import { IInstantiationService, createDecorator } from 'vs/platform/instantiation/common/instantiation';
 import { IModelService } from 'vs/editor/common/services/modelService';
 import { IReplaceService } from 'vs/workbench/parts/search/common/replace';
 import { IProgressRunner } from 'vs/platform/progress/common/progress';
 import { RangeHighlightDecorations } from 'vs/workbench/common/editor/rangeDecorations';
+import { ModelDecorationOptions } from 'vs/editor/common/model/textModelWithDecorations';
 
 export class Match {
 
@@ -71,10 +71,17 @@ export class Match {
 		let searchModel = this.parent().parent().searchModel;
 		let matchString = this.getMatchString();
 		let replaceString = searchModel.replacePattern.getReplaceString(matchString);
+
 		// If match string is not matching then regex pattern has a lookahead expression
 		if (replaceString === null) {
 			replaceString = searchModel.replacePattern.getReplaceString(matchString + this._lineText.substring(this._range.endColumn - 1));
 		}
+
+		// Match string is still not matching. Could be unsupported matches (multi-line).
+		if (replaceString === null) {
+			replaceString = searchModel.replacePattern.pattern;
+		}
+
 		return replaceString;
 	}
 
@@ -85,16 +92,28 @@ export class Match {
 
 export class FileMatch extends Disposable {
 
-	private static getDecorationOption(selected: boolean): IModelDecorationOptions {
-		return {
-			stickiness: TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
-			className: selected ? 'currentFindMatch' : 'findMatch',
-			overviewRuler: {
-				color: 'rgba(246, 185, 77, 0.7)',
-				darkColor: 'rgba(246, 185, 77, 0.7)',
-				position: OverviewRulerLane.Center
-			}
-		};
+	private static _CURRENT_FIND_MATCH = ModelDecorationOptions.register({
+		stickiness: TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+		className: 'currentFindMatch',
+		overviewRuler: {
+			color: 'rgba(246, 185, 77, 0.7)',
+			darkColor: 'rgba(246, 185, 77, 0.7)',
+			position: OverviewRulerLane.Center
+		}
+	});
+
+	private static _FIND_MATCH = ModelDecorationOptions.register({
+		stickiness: TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+		className: 'findMatch',
+		overviewRuler: {
+			color: 'rgba(246, 185, 77, 0.7)',
+			darkColor: 'rgba(246, 185, 77, 0.7)',
+			position: OverviewRulerLane.Center
+		}
+	});
+
+	private static getDecorationOption(selected: boolean): ModelDecorationOptions {
+		return (selected ? FileMatch._CURRENT_FIND_MATCH : FileMatch._FIND_MATCH);
 	}
 
 	private _onChange = this._register(new Emitter<boolean>());
@@ -106,19 +125,19 @@ export class FileMatch extends Disposable {
 	private _resource: URI;
 	private _model: IModel;
 	private _modelListener: IDisposable;
-	private _matches: LinkedMap<string, Match>;
-	private _removedMatches: ArraySet<string>;
+	private _matches: Map<string, Match>;
+	private _removedMatches: Set<string>;
 	private _selectedMatch: Match;
 
 	private _updateScheduler: RunOnceScheduler;
 	private _modelDecorations: string[] = [];
 
-	constructor(private _query: IPatternInfo, private _parent: SearchResult, private rawMatch: IFileMatch,
+	constructor(private _query: IPatternInfo, private _maxResults: number, private _parent: SearchResult, private rawMatch: IFileMatch,
 		@IModelService private modelService: IModelService, @IReplaceService private replaceService: IReplaceService) {
 		super();
 		this._resource = this.rawMatch.resource;
-		this._matches = new LinkedMap<string, Match>();
-		this._removedMatches = new ArraySet<string>();
+		this._matches = new Map<string, Match>();
+		this._removedMatches = new Set<string>();
 		this._updateScheduler = new RunOnceScheduler(this.updateMatchesForModel.bind(this), 250);
 
 		this.createMatches();
@@ -178,31 +197,31 @@ export class FileMatch extends Disposable {
 		if (!this._model) {
 			return;
 		}
-		this._matches = new LinkedMap<string, Match>();
+		this._matches = new Map<string, Match>();
 		let matches = this._model
-			.findMatches(this._query.pattern, this._model.getFullModelRange(), this._query.isRegExp, this._query.isCaseSensitive, this._query.isWordMatch, false);
+			.findMatches(this._query.pattern, this._model.getFullModelRange(), this._query.isRegExp, this._query.isCaseSensitive, this._query.isWordMatch ? this._query.wordSeparators : null, false, this._maxResults);
 
-		this.updateMatches(matches);
+		this.updateMatches(matches, true);
 	}
 
-	private updatesMatchesForLine(lineNumber: number): void {
+	private updatesMatchesForLineAfterReplace(lineNumber: number, modelChange: boolean): void {
 		const range = {
 			startLineNumber: lineNumber,
 			startColumn: this._model.getLineMinColumn(lineNumber),
 			endLineNumber: lineNumber,
 			endColumn: this._model.getLineMaxColumn(lineNumber)
 		};
-		const oldMatches = this._matches.values().filter(match => match.range().startLineNumber === lineNumber);
+		const oldMatches = values(this._matches).filter(match => match.range().startLineNumber === lineNumber);
 		oldMatches.forEach(match => this._matches.delete(match.id()));
 
-		const matches = this._model.findMatches(this._query.pattern, range, this._query.isRegExp, this._query.isCaseSensitive, this._query.isWordMatch, false);
-		this.updateMatches(matches);
+		const matches = this._model.findMatches(this._query.pattern, range, this._query.isRegExp, this._query.isCaseSensitive, this._query.isWordMatch ? this._query.wordSeparators : null, false, this._maxResults);
+		this.updateMatches(matches, modelChange);
 	}
 
-	private updateMatches(matches: FindMatch[]) {
+	private updateMatches(matches: FindMatch[], modelChange: boolean) {
 		matches.forEach(m => {
 			let match = new Match(this, this._model.getLineContent(m.range.startLineNumber), m.range.startLineNumber - 1, m.range.startColumn - 1, m.range.endColumn - m.range.startColumn);
-			if (!this._removedMatches.contains(match.id())) {
+			if (!this._removedMatches.has(match.id())) {
 				this.add(match);
 				if (this.isMatchSelected(match)) {
 					this._selectedMatch = match;
@@ -210,7 +229,7 @@ export class FileMatch extends Disposable {
 			}
 		});
 
-		this._onChange.fire(true);
+		this._onChange.fire(modelChange);
 		this.updateHighlights();
 	}
 
@@ -238,18 +257,18 @@ export class FileMatch extends Disposable {
 	}
 
 	public matches(): Match[] {
-		return this._matches.values();
+		return values(this._matches);
 	}
 
 	public remove(match: Match): void {
 		this.removeMatch(match);
-		this._removedMatches.set(match.id());
+		this._removedMatches.add(match.id());
 		this._onChange.fire(false);
 	}
 
 	public replace(toReplace: Match): TPromise<void> {
 		return this.replaceService.replace(toReplace)
-			.then(() => this.updatesMatchesForLine(toReplace.range().startLineNumber));
+			.then(() => this.updatesMatchesForLineAfterReplace(toReplace.range().startLineNumber, false));
 	}
 
 	public setSelectedMatch(match: Match) {
@@ -320,9 +339,10 @@ export class SearchResult extends Disposable {
 	private _onChange = this._register(new Emitter<IChangeEvent>());
 	public onChange: Event<IChangeEvent> = this._onChange.event;
 
-	private _fileMatches: LinkedMap<URI, FileMatch>;
-	private _unDisposedFileMatches: LinkedMap<URI, FileMatch>;
+	private _fileMatches: ResourceMap<FileMatch>;
+	private _unDisposedFileMatches: ResourceMap<FileMatch>;
 	private _query: IPatternInfo = null;
+	private _maxResults: number;
 	private _showHighlights: boolean;
 	private _replacingAll: boolean = false;
 
@@ -331,13 +351,17 @@ export class SearchResult extends Disposable {
 	constructor(private _searchModel: SearchModel, @IReplaceService private replaceService: IReplaceService, @ITelemetryService private telemetryService: ITelemetryService,
 		@IInstantiationService private instantiationService: IInstantiationService) {
 		super();
-		this._fileMatches = new LinkedMap<URI, FileMatch>();
-		this._unDisposedFileMatches = new LinkedMap<URI, FileMatch>();
+		this._fileMatches = new ResourceMap<FileMatch>();
+		this._unDisposedFileMatches = new ResourceMap<FileMatch>();
 		this._rangeHighlightDecorations = this.instantiationService.createInstance(RangeHighlightDecorations);
 	}
 
 	public set query(query: IPatternInfo) {
 		this._query = query;
+	}
+
+	public set maxResults(maxResults: number) {
+		this._maxResults = maxResults;
 	}
 
 	public get searchModel(): SearchModel {
@@ -348,14 +372,14 @@ export class SearchResult extends Disposable {
 		let changed: FileMatch[] = [];
 		raw.forEach((rawFileMatch) => {
 			if (!this._fileMatches.has(rawFileMatch.resource)) {
-				let fileMatch = this.instantiationService.createInstance(FileMatch, this._query, this, rawFileMatch);
+				let fileMatch = this.instantiationService.createInstance(FileMatch, this._query, this._maxResults, this, rawFileMatch);
 				this.doAdd(fileMatch);
 				changed.push(fileMatch);
 				let disposable = fileMatch.onChange(() => this.onFileChange(fileMatch));
 				fileMatch.onDispose(() => disposable.dispose());
 			}
 		});
-		if (!silent) {
+		if (!silent && changed.length) {
 			this._onChange.fire({ elements: changed, added: true });
 		}
 	}
@@ -537,26 +561,27 @@ export class SearchModel extends Disposable {
 
 	public search(query: ISearchQuery): PPromise<ISearchComplete, ISearchProgressItem> {
 		this.cancelSearch();
-		this.searchResult.clear();
-
 		this._searchQuery = query;
-		this._searchResult.query = this._searchQuery.contentPattern;
-		this._replacePattern = new ReplacePattern(this._replaceString, this._searchQuery.contentPattern);
-
 		this.currentRequest = this.searchService.search(this._searchQuery);
 
+		this.searchResult.clear();
+
+		this._searchResult.query = this._searchQuery.contentPattern;
+		this._searchResult.maxResults = this._searchQuery.maxResults;
+		this._replacePattern = new ReplacePattern(this._replaceString, this._searchQuery.contentPattern);
+
 		const onDone = fromPromise(this.currentRequest);
+		const progressEmitter = new Emitter<void>();
+		const onFirstRender = any(onDone, progressEmitter.event);
+		const onFirstRenderStopwatch = stopwatch(onFirstRender);
+		onFirstRenderStopwatch(duration => this.telemetryService.publicLog('searchResultsFirstRender', { duration }));
+
 		const onDoneStopwatch = stopwatch(onDone);
 		const start = Date.now();
 
 		onDoneStopwatch(duration => this.telemetryService.publicLog('searchResultsFinished', { duration }));
 
-		const progressEmitter = new Emitter<void>();
-		const onFirstRender = any(onDone, progressEmitter.event);
-		const onFirstRenderStopwatch = stopwatch(onFirstRender);
-
-		onFirstRenderStopwatch(duration => this.telemetryService.publicLog('searchResultsFirstRender', { duration }));
-
+		const currentRequest = this.currentRequest;
 		this.currentRequest.then(
 			value => this.onSearchCompleted(value, Date.now() - start),
 			e => this.onSearchError(e, Date.now() - start),
@@ -566,10 +591,13 @@ export class SearchModel extends Disposable {
 			}
 		);
 
-		return this.currentRequest;
+		// this.currentRequest may be completed (and nulled) immediately
+		return currentRequest;
 	}
 
 	private onSearchCompleted(completed: ISearchComplete, duration: number): ISearchComplete {
+		this.currentRequest = null;
+
 		if (completed) {
 			this._searchResult.add(completed.results, false);
 		}

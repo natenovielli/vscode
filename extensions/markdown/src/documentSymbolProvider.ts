@@ -8,16 +8,18 @@
 import * as vscode from 'vscode';
 
 import { MarkdownEngine } from './markdownEngine';
-import { TableOfContentProvider } from './tableOfContentsProvider';
+import { TableOfContentsProvider } from './tableOfContentsProvider';
 
 export default class MDDocumentSymbolProvider implements vscode.DocumentSymbolProvider {
 
-	constructor(private engine: MarkdownEngine) { }
+	constructor(
+		private engine: MarkdownEngine
+	) { }
 
 	provideDocumentSymbols(document: vscode.TextDocument): vscode.ProviderResult<vscode.SymbolInformation[]> {
-		const toc = new TableOfContentProvider(this.engine, document);
+		const toc = new TableOfContentsProvider(this.engine, document);
 		return toc.getToc().map(entry => {
-			return new vscode.SymbolInformation(entry.text, vscode.SymbolKind.Module, '', entry.location);
+			return new vscode.SymbolInformation(entry.text, vscode.SymbolKind.Namespace, '', entry.location);
 		});
 	}
 }

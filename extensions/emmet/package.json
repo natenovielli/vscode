@@ -1,0 +1,78 @@
+{
+    "name": "emmet",
+    "displayName": "emmet",
+    "description": "Emmet support for VS Code",
+    "version": "0.0.1",
+    "publisher": "vscode",
+    "engines": {
+        "vscode": "^1.13.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/Microsoft/vscode-emmet"
+    },
+    "activationEvents": [
+        "*"
+    ],
+    "main": "./out/extension",
+    "contributes": {
+        "configuration": {
+            "type": "object",
+            "title": "Emmet",
+            "properties": {
+                "emmet.showExpandedAbbreviation": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Shows expanded emmet abbreviations as suggestions"
+                },
+                "emmet.showAbbreviationSuggestions": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Shows possible emmet abbreviations as suggestions"
+                },
+                "emmet.variables":{
+                    "type": "object",
+                    "properties": {
+                        "lang": {
+                            "type": "string",
+                            "default": "en"
+                        },
+                        "locale": {
+                            "type": "string",
+                            "default": "en-US"
+                        },
+                        "charset": {
+                            "type": "string",
+                            "default": "UTF-8"
+                        },
+                        "indentation": {
+                            "type": "string",
+                            "default": "\t"
+                        },
+                        "newline": {
+                            "type": "string",
+                            "default": "\n"
+                        }
+                    },
+                    "default":{},
+                    "description": "Variables to be used in emmet snippets"
+                }
+            }
+        }
+    },
+    "scripts": {
+        "compile": "gulp compile-extension:emmet"
+    },
+    "devDependencies": {
+        "@types/node": "^7.0.4"
+    },
+    "dependencies": {
+        "@emmetio/expand-abbreviation": "^0.5.8",
+        "@emmetio/extract-abbreviation": "^0.1.1",
+        "@emmetio/html-matcher": "^0.3.1",
+        "@emmetio/css-parser": "^0.3.0"
+    }
+}

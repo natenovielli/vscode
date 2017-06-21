@@ -7,6 +7,7 @@
 
 import { TPromise } from 'vs/base/common/winjs.base';
 import { IWindowService, IWindowsService } from 'vs/platform/windows/common/windows';
+import { ITelemetryData } from 'vs/platform/telemetry/common/telemetry';
 
 export class WindowService implements IWindowService {
 
@@ -21,16 +22,20 @@ export class WindowService implements IWindowService {
 		return this.windowId;
 	}
 
-	openFileFolderPicker(forceNewWindow?: boolean): TPromise<void> {
-		return this.windowsService.openFileFolderPicker(this.windowId, forceNewWindow);
+	pickFileFolderAndOpen(forceNewWindow?: boolean, data?: ITelemetryData): TPromise<void> {
+		return this.windowsService.pickFileFolderAndOpen(this.windowId, forceNewWindow, data);
 	}
 
-	openFilePicker(forceNewWindow?: boolean, path?: string): TPromise<void> {
-		return this.windowsService.openFilePicker(this.windowId, forceNewWindow, path);
+	pickFileAndOpen(forceNewWindow?: boolean, path?: string, data?: ITelemetryData): TPromise<void> {
+		return this.windowsService.pickFileAndOpen(this.windowId, forceNewWindow, path, data);
 	}
 
-	openFolderPicker(forceNewWindow?: boolean): TPromise<void> {
-		return this.windowsService.openFolderPicker(this.windowId, forceNewWindow);
+	pickFolderAndOpen(forceNewWindow?: boolean, data?: ITelemetryData): TPromise<void> {
+		return this.windowsService.pickFolderAndOpen(this.windowId, forceNewWindow, data);
+	}
+
+	pickFolder(options?: { buttonLabel: string; title: string; }): TPromise<string[]> {
+		return this.windowsService.pickFolder(options);
 	}
 
 	reloadWindow(): TPromise<void> {
@@ -73,6 +78,10 @@ export class WindowService implements IWindowService {
 		return this.windowsService.focusWindow(this.windowId);
 	}
 
+	isFocused(): TPromise<boolean> {
+		return this.windowsService.isFocused(this.windowId);
+	}
+
 	isMaximized(): TPromise<boolean> {
 		return this.windowsService.isMaximized(this.windowId);
 	}
@@ -83,6 +92,10 @@ export class WindowService implements IWindowService {
 
 	unmaximizeWindow(): TPromise<void> {
 		return this.windowsService.unmaximizeWindow(this.windowId);
+	}
+
+	onWindowTitleDoubleClick(): TPromise<void> {
+		return this.windowsService.onWindowTitleDoubleClick(this.windowId);
 	}
 
 	setDocumentEdited(flag: boolean): TPromise<void> {

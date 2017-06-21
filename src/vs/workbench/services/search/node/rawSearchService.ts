@@ -6,6 +6,7 @@
 'use strict';
 
 import fs = require('fs');
+import { isAbsolute, sep } from 'path';
 
 import gracefulFs = require('graceful-fs');
 gracefulFs.gracefulify(fs);
@@ -13,12 +14,12 @@ gracefulFs.gracefulify(fs);
 import arrays = require('vs/base/common/arrays');
 import { compareByScore } from 'vs/base/common/comparers';
 import objects = require('vs/base/common/objects');
-import paths = require('vs/base/common/paths');
 import scorer = require('vs/base/common/scorer');
 import strings = require('vs/base/common/strings');
 import { PPromise, TPromise } from 'vs/base/common/winjs.base';
-import { MAX_FILE_SIZE } from 'vs/platform/files/common/files';
 import { FileWalker, Engine as FileSearchEngine } from 'vs/workbench/services/search/node/fileSearch';
+import { MAX_FILE_SIZE } from 'vs/platform/files/common/files';
+import { RipgrepEngine } from 'vs/workbench/services/search/node/ripgrepTextSearch';
 import { Engine as TextSearchEngine } from 'vs/workbench/services/search/node/textSearch';
 import { TextSearchWorkerProvider } from 'vs/workbench/services/search/node/textSearchWorkerProvider';
 import { IRawSearchService, IRawSearch, IRawFileMatch, ISerializedFileMatch, ISerializedSearchProgressItem, ISerializedSearchComplete, ISearchEngine } from './search';
@@ -39,6 +40,37 @@ export class SearchService implements IRawSearchService {
 	}
 
 	public textSearch(config: IRawSearch): PPromise<ISerializedSearchComplete, ISerializedSearchProgressItem> {
+		return config.useRipgrep ?
+			this.ripgrepTextSearch(config) :
+			this.legacyTextSearch(config);
+	}
+
+	public ripgrepTextSearch(config: IRawSearch): PPromise<ISerializedSearchComplete, ISerializedSearchProgressItem> {
+		config.maxFilesize = MAX_FILE_SIZE;
+		let engine = new RipgrepEngine(config);
+
+		return new PPromise<ISerializedSearchComplete, IRawProgressItem<ISerializedFileMatch>>((c, e, p) => {
+			// Use BatchedCollector to get new results to the frontend every 2s at least, until 50 results have been returned
+			const collector = new BatchedCollector<ISerializedFileMatch>(SearchService.BATCH_SIZE, p);
+			engine.search((match) => {
+				collector.addItem(match, match.numMatches);
+			}, (message) => {
+				p(message);
+			}, (error, stats) => {
+				collector.flush();
+
+				if (error) {
+					e(error);
+				} else {
+					c(stats);
+				}
+			});
+		}, () => {
+			engine.cancel();
+		});
+	}
+
+	public legacyTextSearch(config: IRawSearch): PPromise<ISerializedSearchComplete, ISerializedSearchProgressItem> {
 		if (!this.textSearchWorkerProvider) {
 			this.textSearchWorkerProvider = new TextSearchWorkerProvider();
 		}
@@ -100,7 +132,7 @@ export class SearchService implements IRawSearchService {
 	}
 
 	private rawMatchToSearchItem(match: IRawFileMatch): ISerializedFileMatch {
-		return { path: match.base ? [match.base, match.relativePath].join(paths.nativeSep) : match.relativePath };
+		return { path: match.base ? [match.base, match.relativePath].join(sep) : match.relativePath };
 	}
 
 	private doSortedSearch(engine: ISearchEngine<IRawFileMatch>, config: IRawSearch): PPromise<[ISerializedSearchComplete, IRawFileMatch[]], IProgress> {
@@ -162,7 +194,7 @@ export class SearchService implements IRawSearchService {
 	private trySortedSearchFromCache(config: IRawSearch): PPromise<[ISerializedSearchComplete, IRawFileMatch[]], IProgress> {
 		const cache = config.cacheKey && this.caches[config.cacheKey];
 		if (!cache) {
-			return;
+			return undefined;
 		}
 
 		const cacheLookupStartTime = Date.now();
@@ -201,6 +233,7 @@ export class SearchService implements IRawSearchService {
 				cached.cancel();
 			});
 		}
+		return undefined;
 	}
 
 	private sortResults(config: IRawSearch, results: IRawFileMatch[], scorerCache: ScorerCache): IRawFileMatch[] {
@@ -221,19 +254,19 @@ export class SearchService implements IRawSearchService {
 	}
 
 	private getResultsFromCache(cache: Cache, searchValue: string): PPromise<[ISerializedSearchComplete, IRawFileMatch[], CacheStats], IProgress> {
-		if (paths.isAbsolute(searchValue)) {
+		if (isAbsolute(searchValue)) {
 			return null; // bypass cache if user looks up an absolute path where matching goes directly on disk
 		}
 
 		// Find cache entries by prefix of search value
-		const hasPathSep = searchValue.indexOf(paths.nativeSep) >= 0;
+		const hasPathSep = searchValue.indexOf(sep) >= 0;
 		let cached: PPromise<[ISerializedSearchComplete, IRawFileMatch[]], IProgress>;
 		let wasResolved: boolean;
 		for (let previousSearch in cache.resultsToSearchCache) {
 
 			// If we narrow down, we might be able to reuse the cached results
 			if (strings.startsWith(searchValue, previousSearch)) {
-				if (hasPathSep && previousSearch.indexOf(paths.nativeSep) < 0) {
+				if (hasPathSep && previousSearch.indexOf(sep) < 0) {
 					continue; // since a path character widens the search for potential more matches, require it in previous search too
 				}
 
@@ -398,6 +431,18 @@ class BatchedCollector<T> {
 	constructor(private maxBatchSize: number, private cb: (items: T | T[]) => void) {
 	}
 
+	addItem(item: T, size: number): void {
+		if (!item) {
+			return;
+		}
+
+		if (this.maxBatchSize > 0) {
+			this.addItemToBatch(item, size);
+		} else {
+			this.cb(item);
+		}
+	}
+
 	addItems(items: T[], size: number): void {
 		if (!items) {
 			return;
@@ -410,9 +455,19 @@ class BatchedCollector<T> {
 		}
 	}
 
-	private addItemsToBatch(items: T[], size: number): void {
-		this.batch = this.batch.concat(items);
+	private addItemToBatch(item: T, size: number): void {
+		this.batch.push(item);
 		this.batchSize += size;
+		this.onUpdate();
+	}
+
+	private addItemsToBatch(item: T[], size: number): void {
+		this.batch = this.batch.concat(item);
+		this.batchSize += size;
+		this.onUpdate();
+	}
+
+	private onUpdate(): void {
 		if (this.totalNumberCompleted < BatchedCollector.START_BATCH_AFTER_COUNT) {
 			// Flush because we aren't batching yet
 			this.flush();

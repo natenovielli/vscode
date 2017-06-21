@@ -6,23 +6,35 @@
 'use strict';
 
 import * as vscode from 'vscode';
-import { getLocation, visit } from 'jsonc-parser';
+import { getLocation, visit, parse } from 'jsonc-parser';
 import * as path from 'path';
+import { SettingsDocument } from './settingsDocumentHelper';
 
 const decoration = vscode.window.createTextEditorDecorationType({
 	color: '#b1b1b1'
 });
 
-export function activate(context) {
+let pendingLaunchJsonDecoration: NodeJS.Timer;
+
+export function activate(context): void {
 
 	//keybindings.json command-suggestions
 	context.subscriptions.push(registerKeybindingsCompletions());
+
+	//settings.json suggestions
+	context.subscriptions.push(registerSettingsCompletions());
+
+	//extensions.json suggestions
+	context.subscriptions.push(registerExtensionsCompletions());
 
 	// launch.json decorations
 	context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(editor => updateLaunchJsonDecorations(editor), null, context.subscriptions));
 	context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(event => {
 		if (vscode.window.activeTextEditor && event.document === vscode.window.activeTextEditor.document) {
-			updateLaunchJsonDecorations(vscode.window.activeTextEditor);
+			if (pendingLaunchJsonDecoration) {
+				clearTimeout(pendingLaunchJsonDecoration);
+			}
+			pendingLaunchJsonDecoration = setTimeout(() => updateLaunchJsonDecorations(vscode.window.activeTextEditor), 1000);
 		}
 	}, null, context.subscriptions));
 	updateLaunchJsonDecorations(vscode.window.activeTextEditor);
@@ -38,23 +50,62 @@ function registerKeybindingsCompletions(): vscode.Disposable {
 			if (location.path[1] === 'command') {
 
 				const range = document.getWordRangeAtPosition(position) || new vscode.Range(position, position);
-				return commands.then(ids => ids.map(id => newCompletionItem(id, range)));
+				return commands.then(ids => ids.map(id => newSimpleCompletionItem(JSON.stringify(id), range)));
 			}
 		}
 	});
 }
 
-function newCompletionItem(text: string, range: vscode.Range) {
-	const item = new vscode.CompletionItem(JSON.stringify(text));
+function registerSettingsCompletions(): vscode.Disposable {
+	return vscode.languages.registerCompletionItemProvider({ language: 'json', pattern: '**/settings.json' }, {
+		provideCompletionItems(document, position, token) {
+			return new SettingsDocument(document).provideCompletionItems(position, token);
+		}
+	});
+}
+
+function registerExtensionsCompletions(): vscode.Disposable {
+	return vscode.languages.registerCompletionItemProvider({ pattern: '**/extensions.json' }, {
+		provideCompletionItems(document, position, token) {
+			const location = getLocation(document.getText(), document.offsetAt(position));
+			const range = document.getWordRangeAtPosition(position) || new vscode.Range(position, position);
+			if (location.path[0] === 'recommendations') {
+				const config = parse(document.getText());
+				const alreadyEnteredExtensions = config && config.recommendations || [];
+				if (Array.isArray(alreadyEnteredExtensions)) {
+					return vscode.extensions.all
+						.filter(e => !(
+							e.id.startsWith('vscode.')
+							|| e.id === 'Microsoft.vscode-markdown'
+							|| alreadyEnteredExtensions.indexOf(e.id) > -1
+						))
+						.map(e => {
+							const item = new vscode.CompletionItem(e.id);
+							const insertText = `"${e.id}"`;
+							item.kind = vscode.CompletionItemKind.Value;
+							item.insertText = insertText;
+							item.range = range;
+							item.filterText = insertText;
+							return item;
+						});
+				}
+			}
+			return [];
+		}
+	});
+}
+
+function newSimpleCompletionItem(label: string, range: vscode.Range, description?: string, insertText?: string): vscode.CompletionItem {
+	const item = new vscode.CompletionItem(label);
 	item.kind = vscode.CompletionItemKind.Value;
-	item.textEdit = {
-		range,
-		newText: item.label
-	};
+	item.detail = description;
+	item.insertText = insertText || label;
+	item.range = range;
+
 	return item;
 }
 
-function updateLaunchJsonDecorations(editor: vscode.TextEditor | undefined) {
+function updateLaunchJsonDecorations(editor: vscode.TextEditor | undefined): void {
 	if (!editor || path.basename(editor.document.fileName) !== 'launch.json') {
 		return;
 	}
@@ -86,4 +137,3 @@ function updateLaunchJsonDecorations(editor: vscode.TextEditor | undefined) {
 
 	editor.setDecorations(decoration, ranges);
 }
-

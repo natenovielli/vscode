@@ -13,6 +13,8 @@ import { ScrollEvent, ScrollbarVisibility } from 'vs/base/common/scrollable';
 import { RangeMap, IRange, relativeComplement, each } from './rangeMap';
 import { IDelegate, IRenderer } from './list';
 import { RowCache, IRow } from './rowCache';
+import { isWindows } from 'vs/base/common/platform';
+import { canUseTranslate3d } from 'vs/base/browser/browser';
 
 interface IItem<T> {
 	id: string;
@@ -65,7 +67,7 @@ export class ListView<T> implements IDisposable {
 		this.items = [];
 		this.itemId = 0;
 		this.rangeMap = new RangeMap();
-		this.renderers = toObject<IRenderer<T, any>, IRenderer<T, any>>(renderers, r => r.templateId);
+		this.renderers = toObject<IRenderer<T, any>>(renderers, r => r.templateId);
 		this.cache = new RowCache(this.renderers);
 
 		this.lastRenderTop = 0;
@@ -79,12 +81,10 @@ export class ListView<T> implements IDisposable {
 		this.gesture = new Gesture(this.rowsContainer);
 
 		this.scrollableElement = new ScrollableElement(this.rowsContainer, {
-			canUseTranslate3d: false,
 			alwaysConsumeMouseWheel: true,
 			horizontal: ScrollbarVisibility.Hidden,
 			vertical: ScrollbarVisibility.Auto,
-			useShadows: getOrDefault(options, o => o.useShadows, DefaultOptions.useShadows),
-			saveLastScrollTimeOnClassName: 'monaco-list-row'
+			useShadows: getOrDefault(options, o => o.useShadows, DefaultOptions.useShadows)
 		});
 
 		this._domNode.appendChild(this.scrollableElement.getDomNode());
@@ -133,11 +133,17 @@ export class ListView<T> implements IDisposable {
 	}
 
 	get renderHeight(): number {
-		return this.scrollableElement.getHeight();
+		const scrollState = this.scrollableElement.getScrollState();
+		return scrollState.height;
 	}
 
 	element(index: number): T {
 		return this.items[index].element;
+	}
+
+	domElement(index: number): HTMLElement {
+		const row = this.items[index].row;
+		return row && row.domNode;
 	}
 
 	elementHeight(index: number): number {
@@ -174,9 +180,14 @@ export class ListView<T> implements IDisposable {
 		rangesToInsert.forEach(range => each(range, i => this.insertItemInDOM(this.items[i], i)));
 		rangesToRemove.forEach(range => each(range, i => this.removeItemFromDOM(this.items[i])));
 
-		const transform = `translate3d(0px, -${renderTop}px, 0px)`;
-		this.rowsContainer.style.transform = transform;
-		this.rowsContainer.style.webkitTransform = transform;
+		if (canUseTranslate3d() && !isWindows /* Windows: translate3d breaks subpixel-antialias (ClearType) unless a background is defined */) {
+			const transform = `translate3d(0px, -${renderTop}px, 0px)`;
+			this.rowsContainer.style.transform = transform;
+			this.rowsContainer.style.webkitTransform = transform;
+		} else {
+			this.rowsContainer.style.top = `-${renderTop}px`;
+		}
+
 		this.lastRenderTop = renderTop;
 		this.lastRenderHeight = renderHeight;
 	}
@@ -209,7 +220,8 @@ export class ListView<T> implements IDisposable {
 	}
 
 	getScrollTop(): number {
-		return this.scrollableElement.getScrollTop();
+		const scrollState = this.scrollableElement.getScrollState();
+		return scrollState.scrollTop;
 	}
 
 	setScrollTop(scrollTop: number): void {
@@ -231,16 +243,20 @@ export class ListView<T> implements IDisposable {
 		let domNode = this.domNode;
 
 		if (MouseEventTypes.indexOf(type) > -1) {
-			handler = e => this.fireScopedEvent(userHandler, this.getItemIndexFromMouseEvent(e));
+			handler = e => this.fireScopedEvent(e, userHandler, this.getItemIndexFromMouseEvent(e));
 		} else if (type === TouchEventType.Tap) {
 			domNode = this.rowsContainer;
-			handler = e => this.fireScopedEvent(userHandler, this.getItemIndexFromGestureEvent(e));
+			handler = e => this.fireScopedEvent(e, userHandler, this.getItemIndexFromGestureEvent(e));
 		}
 
 		return DOM.addDisposableListener(domNode, type, handler, useCapture);
 	}
 
-	private fireScopedEvent(handler: (event: any) => void, index: number) {
+	private fireScopedEvent(
+		event: any,
+		handler: (event: any) => void,
+		index: number
+	) {
 		if (index < 0) {
 			return;
 		}
@@ -253,11 +269,11 @@ export class ListView<T> implements IDisposable {
 		this.render(e.scrollTop, e.height);
 	}
 
-	private onTouchChange(e: GestureEvent): void {
+	private onTouchChange(event: GestureEvent): void {
 		event.preventDefault();
 		event.stopPropagation();
 
-		this.scrollTop -= e.translationY;
+		this.scrollTop -= event.translationY;
 	}
 
 	// Util

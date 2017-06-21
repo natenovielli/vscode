@@ -258,16 +258,16 @@ export class ModelLine {
 		this._lineTokens = tokens.buffer;
 	}
 
-	public getTokens(topLevelLanguageId: LanguageId, colorMap: string[]): LineTokens {
+	public getTokens(topLevelLanguageId: LanguageId): LineTokens {
 		let rawLineTokens = this._lineTokens;
 		if (rawLineTokens) {
-			return new LineTokens(colorMap, new Uint32Array(rawLineTokens), this._text);
+			return new LineTokens(new Uint32Array(rawLineTokens), this._text);
 		}
 
 		let lineTokens = new Uint32Array(2);
 		lineTokens[0] = 0;
 		lineTokens[1] = ModelLine._getDefaultMetadata(topLevelLanguageId);
-		return new LineTokens(colorMap, lineTokens, this._text);
+		return new LineTokens(lineTokens, this._text);
 	}
 
 	// --- END TOKENS
@@ -416,11 +416,11 @@ export class ModelLine {
 
 	// 	var markers = this._markers;
 
-	// 	var printMarker = (m:ILineMarker) => {
+	// 	var printMarker = (m:LineMarker) => {
 	// 		if (m.stickToPreviousCharacter) {
-	// 			return '|' + m.column;
+	// 			return '|' + m.position.column;
 	// 		}
-	// 		return m.column + '|';
+	// 		return m.position.column + '|';
 	// 	};
 	// 	return '[' + markers.map(printMarker).join(', ') + ']';
 	// }
@@ -721,9 +721,9 @@ export class ModelLine {
 
 	public getMarkers(): LineMarker[] {
 		if (!this._markers) {
-			return [];
+			return null;
 		}
-		return this._markers.slice(0);
+		return this._markers;
 	}
 
 	public updateLineNumber(markersTracker: MarkersTracker, newLineNumber: number): void {
@@ -741,13 +741,6 @@ export class ModelLine {
 		this._lineNumber = newLineNumber;
 	}
 
-	public deleteLine(): LineMarker[] {
-		if (!this._markers) {
-			return [];
-		}
-		return this._markers;
-	}
-
 	private _indexOfMarkerId(markerId: string): number {
 		let markers = this._markers;
 		for (let i = 0, len = markers.length; i < len; i++) {
@@ -755,5 +748,6 @@ export class ModelLine {
 				return i;
 			}
 		}
+		return undefined;
 	}
 }
