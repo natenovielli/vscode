@@ -6,90 +6,34 @@
 
 import { CancellationToken, Uri, Event } from 'vscode';
 import * as Proto from './protocol';
-import * as semver from 'semver';
+import API from './utils/api';
+import { TypeScriptServerPlugin } from './utils/plugins';
+import { TypeScriptServiceConfiguration } from './utils/configuration';
+import Logger from './utils/logger';
 
-export interface ITypescriptServiceClientHost {
+export interface ITypeScriptServiceClientHost {
 	syntaxDiagnosticsReceived(event: Proto.DiagnosticEvent): void;
 	semanticDiagnosticsReceived(event: Proto.DiagnosticEvent): void;
 	configFileDiagnosticsReceived(event: Proto.ConfigFileDiagnosticEvent): void;
 	populateService(): void;
 }
 
-export class API {
 
-	private _version: string;
-
-	constructor(private _versionString: string) {
-		this._version = semver.valid(_versionString);
-		if (!this._version) {
-			this._version = '1.0.0';
-		} else {
-			// Cut of any prerelease tag since we sometimes consume those
-			// on purpose.
-			let index = _versionString.indexOf('-');
-			if (index >= 0) {
-				this._version = this._version.substr(0, index);
-			}
-		}
-	}
-
-	public get versionString(): string {
-		return this._versionString;
-	}
-
-	public has203Features(): boolean {
-		return semver.gte(this._version, '2.0.3');
-	}
-
-	public has206Features(): boolean {
-		return semver.gte(this._version, '2.0.6');
-	}
-
-	public has208Features(): boolean {
-		return semver.gte(this._version, '2.0.8');
-	}
-
-	public has213Features(): boolean {
-		return semver.gte(this._version, '2.1.3');
-	}
-
-	public has220Features(): boolean {
-		return semver.gte(this._version, '2.2.0');
-	}
-
-	public has222Features(): boolean {
-		return semver.gte(this._version, '2.2.2');
-	}
-
-	public has230Features(): boolean {
-		return semver.gte(this._version, '2.3.0');
-	}
-
-	public has234Features(): boolean {
-		return semver.gte(this._version, '2.3.4');
-	}
-	public has240Features(): boolean {
-		return semver.gte(this._version, '2.4.0');
-	}
-}
-
-export interface ITypescriptServiceClient {
+export interface ITypeScriptServiceClient {
 	normalizePath(resource: Uri): string | null;
 	asUrl(filepath: string): Uri;
-
-	warn(message: string, data?: any): void;
+	getWorkspaceRootForResource(resource: Uri): string | undefined;
 
 	onTsServerStarted: Event<void>;
-
 	onProjectLanguageServiceStateChanged: Event<Proto.ProjectLanguageServiceStateEventBody>;
 	onDidBeginInstallTypings: Event<Proto.BeginInstallTypesEventBody>;
 	onDidEndInstallTypings: Event<Proto.EndInstallTypesEventBody>;
 	onTypesInstallerInitializationFailed: Event<Proto.TypesInstallerInitializationFailedEventBody>;
 
-	logTelemetry(eventName: string, properties?: { [prop: string]: string }): void;
-
 	apiVersion: API;
-	checkGlobalTSCVersion: boolean;
+	plugins: TypeScriptServerPlugin[];
+	configuration: TypeScriptServiceConfiguration;
+	logger: Logger;
 
 	execute(command: 'configure', args: Proto.ConfigureRequestArguments, token?: CancellationToken): Promise<Proto.ConfigureResponse>;
 	execute(command: 'open', args: Proto.OpenRequestArgs, expectedResult: boolean, token?: CancellationToken): Promise<any>;
@@ -98,8 +42,8 @@ export interface ITypescriptServiceClient {
 	execute(command: 'geterr', args: Proto.GeterrRequestArgs, expectedResult: boolean, token?: CancellationToken): Promise<any>;
 	execute(command: 'quickinfo', args: Proto.FileLocationRequestArgs, token?: CancellationToken): Promise<Proto.QuickInfoResponse>;
 	execute(command: 'completions', args: Proto.CompletionsRequestArgs, token?: CancellationToken): Promise<Proto.CompletionsResponse>;
-	execute(commant: 'completionEntryDetails', args: Proto.CompletionDetailsRequestArgs, token?: CancellationToken): Promise<Proto.CompletionDetailsResponse>;
-	execute(commant: 'signatureHelp', args: Proto.SignatureHelpRequestArgs, token?: CancellationToken): Promise<Proto.SignatureHelpResponse>;
+	execute(command: 'completionEntryDetails', args: Proto.CompletionDetailsRequestArgs, token?: CancellationToken): Promise<Proto.CompletionDetailsResponse>;
+	execute(command: 'signatureHelp', args: Proto.SignatureHelpRequestArgs, token?: CancellationToken): Promise<Proto.SignatureHelpResponse>;
 	execute(command: 'definition', args: Proto.FileLocationRequestArgs, token?: CancellationToken): Promise<Proto.DefinitionResponse>;
 	execute(command: 'implementation', args: Proto.FileLocationRequestArgs, token?: CancellationToken): Promise<Proto.ImplementationResponse>;
 	execute(command: 'typeDefinition', args: Proto.FileLocationRequestArgs, token?: CancellationToken): Promise<Proto.TypeDefinitionResponse>;
@@ -117,9 +61,11 @@ export interface ITypescriptServiceClient {
 	execute(command: 'navtree', args: Proto.FileRequestArgs, token?: CancellationToken): Promise<Proto.NavTreeResponse>;
 	execute(command: 'getCodeFixes', args: Proto.CodeFixRequestArgs, token?: CancellationToken): Promise<Proto.GetCodeFixesResponse>;
 	execute(command: 'getSupportedCodeFixes', args: null, token?: CancellationToken): Promise<Proto.GetSupportedCodeFixesResponse>;
+	execute(command: 'getCombinedCodeFix', args: Proto.GetCombinedCodeFixRequestArgs, token?: CancellationToken): Promise<Proto.GetCombinedCodeFixResponse>;
 	execute(command: 'docCommentTemplate', args: Proto.FileLocationRequestArgs, token?: CancellationToken): Promise<Proto.DocCommandTemplateResponse>;
 	execute(command: 'getApplicableRefactors', args: Proto.GetApplicableRefactorsRequestArgs, token?: CancellationToken): Promise<Proto.GetApplicableRefactorsResponse>;
 	execute(command: 'getEditsForRefactor', args: Proto.GetEditsForRefactorRequestArgs, token?: CancellationToken): Promise<Proto.GetEditsForRefactorResponse>;
+	execute(command: 'applyCodeActionCommand', args: Proto.ApplyCodeActionCommandRequestArgs, token?: CancellationToken): Promise<Proto.ApplyCodeActionCommandResponse>;
 	// execute(command: 'compileOnSaveAffectedFileList', args: Proto.CompileOnSaveEmitFileRequestArgs, token?: CancellationToken): Promise<Proto.CompileOnSaveAffectedFileListResponse>;
 	// execute(command: 'compileOnSaveEmitFile', args: Proto.CompileOnSaveEmitFileRequestArgs, token?: CancellationToken): Promise<any>;
 	execute(command: string, args: any, expectedResult: boolean | CancellationToken, token?: CancellationToken): Promise<any>;

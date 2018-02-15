@@ -7,7 +7,6 @@
   "engines": {
     "vscode": "*"
   },
-  "enableProposedApi": true,
   "categories": [
     "Other"
   ],
@@ -16,10 +15,10 @@
     "watch": "gulp watch-extension:jake"
   },
   "dependencies": {
-    "vscode-nls": "^2.0.2"
+    "vscode-nls": "^3.2.1"
   },
   "devDependencies": {
-    "@types/node": "^7.0.18"
+    "@types/node": "7.0.43"
   },
   "main": "./out/main",
   "activationEvents": [
@@ -32,6 +31,7 @@
       "title": "Jake",
       "properties": {
         "jake.autoDetect": {
+          "scope": "resource",
           "type": "string",
           "enum": [
             "off",
@@ -41,6 +41,22 @@
           "description": "%config.jake.autoDetect%"
         }
       }
-    }
+    },
+    "taskDefinitions": [
+      {
+        "type": "jake",
+        "required": ["task"],
+        "properties": {
+          "task": {
+            "type": "string",
+            "description": "The Jake task to customize"
+          },
+          "file": {
+            "type": "string",
+            "description": "The Jake file that provides the task. Can be omitted."
+          }
+        }
+      }
+    ]
   }
 }

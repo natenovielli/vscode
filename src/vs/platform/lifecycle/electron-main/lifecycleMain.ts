@@ -7,13 +7,13 @@
 
 import { ipcMain as ipc, app } from 'electron';
 import { TPromise, TValueCallback } from 'vs/base/common/winjs.base';
-import { IEnvironmentService } from 'vs/platform/environment/common/environment';
 import { ILogService } from 'vs/platform/log/common/log';
-import { IStorageService } from 'vs/platform/storage/node/storage';
+import { IStateService } from 'vs/platform/state/common/state';
 import Event, { Emitter } from 'vs/base/common/event';
 import { createDecorator } from 'vs/platform/instantiation/common/instantiation';
-import { ICodeWindow } from "vs/platform/windows/electron-main/windows";
-import { ReadyState } from "vs/platform/windows/common/windows";
+import { ICodeWindow } from 'vs/platform/windows/electron-main/windows';
+import { ReadyState } from 'vs/platform/windows/common/windows';
+import { handleVetos } from 'vs/platform/lifecycle/common/lifecycle';
 
 export const ILifecycleService = createDecorator<ILifecycleService>('lifecycleService');
 
@@ -22,6 +22,12 @@ export enum UnloadReason {
 	QUIT = 2,
 	RELOAD = 3,
 	LOAD = 4
+}
+
+export interface IWindowUnloadEvent {
+	window: ICodeWindow;
+	reason: UnloadReason;
+	veto(value: boolean | TPromise<boolean>): void;
 }
 
 export interface ILifecycleService {
@@ -46,24 +52,29 @@ export interface ILifecycleService {
 	 */
 	onBeforeWindowClose: Event<ICodeWindow>;
 
+	/**
+	 * An even that can be vetoed to prevent a window from being unloaded.
+	 */
+	onBeforeWindowUnload: Event<IWindowUnloadEvent>;
+
 	ready(): void;
-	registerWindow(codeWindow: ICodeWindow): void;
+	registerWindow(window: ICodeWindow): void;
 
-	unload(codeWindow: ICodeWindow, reason: UnloadReason): TPromise<boolean /* veto */>;
+	unload(window: ICodeWindow, reason: UnloadReason): TPromise<boolean /* veto */>;
 
-	relaunch(options?: { addArgs?: string[], removeArgs?: string[] });
+	relaunch(options?: { addArgs?: string[], removeArgs?: string[] }): void;
 
 	quit(fromUpdate?: boolean): TPromise<boolean /* veto */>;
 	isQuitRequested(): boolean;
 
-	kill(code?: number);
+	kill(code?: number): void;
 }
 
 export class LifecycleService implements ILifecycleService {
 
 	_serviceBrand: any;
 
-	private static QUIT_FROM_RESTART_MARKER = 'quit.from.restart'; // use a marker to find out if the session was restarted
+	private static readonly QUIT_FROM_RESTART_MARKER = 'quit.from.restart'; // use a marker to find out if the session was restarted
 
 	private windowToCloseRequest: { [windowId: string]: boolean };
 	private quitRequested: boolean;
@@ -78,10 +89,12 @@ export class LifecycleService implements ILifecycleService {
 	private _onBeforeWindowClose = new Emitter<ICodeWindow>();
 	onBeforeWindowClose: Event<ICodeWindow> = this._onBeforeWindowClose.event;
 
+	private _onBeforeWindowUnload = new Emitter<IWindowUnloadEvent>();
+	onBeforeWindowUnload: Event<IWindowUnloadEvent> = this._onBeforeWindowUnload.event;
+
 	constructor(
-		@IEnvironmentService private environmentService: IEnvironmentService,
 		@ILogService private logService: ILogService,
-		@IStorageService private storageService: IStorageService
+		@IStateService private stateService: IStateService
 	) {
 		this.windowToCloseRequest = Object.create(null);
 		this.quitRequested = false;
@@ -92,10 +105,10 @@ export class LifecycleService implements ILifecycleService {
 	}
 
 	private handleRestarted(): void {
-		this._wasRestarted = !!this.storageService.getItem(LifecycleService.QUIT_FROM_RESTART_MARKER);
+		this._wasRestarted = !!this.stateService.getItem(LifecycleService.QUIT_FROM_RESTART_MARKER);
 
 		if (this._wasRestarted) {
-			this.storageService.removeItem(LifecycleService.QUIT_FROM_RESTART_MARKER); // remove the marker right after if found
+			this.stateService.removeItem(LifecycleService.QUIT_FROM_RESTART_MARKER); // remove the marker right after if found
 		}
 	}
 
@@ -110,8 +123,8 @@ export class LifecycleService implements ILifecycleService {
 	private registerListeners(): void {
 
 		// before-quit
-		app.on('before-quit', (e) => {
-			this.logService.log('Lifecycle#before-quit');
+		app.on('before-quit', e => {
+			this.logService.trace('Lifecycle#before-quit');
 
 			if (!this.quitRequested) {
 				this._onBeforeQuit.fire(); // only send this if this is the first quit request we have
@@ -122,27 +135,26 @@ export class LifecycleService implements ILifecycleService {
 
 		// window-all-closed
 		app.on('window-all-closed', () => {
-			this.logService.log('Lifecycle#window-all-closed');
+			this.logService.trace('Lifecycle#window-all-closed');
 
 			// Windows/Linux: we quit when all windows have closed
 			// Mac: we only quit when quit was requested
-			// --wait: we quit when all windows are closed
-			if (this.quitRequested || process.platform !== 'darwin' || this.environmentService.wait) {
+			if (this.quitRequested || process.platform !== 'darwin') {
 				app.quit();
 			}
 		});
 	}
 
-	public registerWindow(codeWindow: ICodeWindow): void {
+	public registerWindow(window: ICodeWindow): void {
 
 		// Window Before Closing: Main -> Renderer
-		codeWindow.win.on('close', e => {
-			const windowId = codeWindow.id;
-			this.logService.log('Lifecycle#window-before-close', windowId);
+		window.win.on('close', e => {
+			const windowId = window.id;
+			this.logService.trace('Lifecycle#window-before-close', windowId);
 
 			// The window already acknowledged to be closed
 			if (this.windowToCloseRequest[windowId]) {
-				this.logService.log('Lifecycle#window-close', windowId);
+				this.logService.trace('Lifecycle#window-close', windowId);
 
 				delete this.windowToCloseRequest[windowId];
 
@@ -151,11 +163,11 @@ export class LifecycleService implements ILifecycleService {
 
 			// Otherwise prevent unload and handle it from window
 			e.preventDefault();
-			this.unload(codeWindow, UnloadReason.CLOSE).done(veto => {
+			this.unload(window, UnloadReason.CLOSE).done(veto => {
 				if (!veto) {
 					this.windowToCloseRequest[windowId] = true;
-					this._onBeforeWindowClose.fire(codeWindow);
-					codeWindow.close();
+					this._onBeforeWindowClose.fire(window);
+					window.close();
 				} else {
 					this.quitRequested = false;
 					delete this.windowToCloseRequest[windowId];
@@ -164,16 +176,55 @@ export class LifecycleService implements ILifecycleService {
 		});
 	}
 
-	public unload(codeWindow: ICodeWindow, reason: UnloadReason): TPromise<boolean /* veto */> {
+	public unload(window: ICodeWindow, reason: UnloadReason): TPromise<boolean /* veto */> {
 
 		// Always allow to unload a window that is not yet ready
-		if (codeWindow.readyState !== ReadyState.READY) {
+		if (window.readyState !== ReadyState.READY) {
 			return TPromise.as<boolean>(false);
 		}
 
-		this.logService.log('Lifecycle#unload()', codeWindow.id);
+		this.logService.trace('Lifecycle#unload()', window.id);
 
-		return new TPromise<boolean>((c) => {
+		const windowUnloadReason = this.quitRequested ? UnloadReason.QUIT : reason;
+
+		// first ask the window itself if it vetos the unload
+		return this.onBeforeUnloadWindowInRenderer(window, windowUnloadReason).then(veto => {
+			if (veto) {
+				this.logService.trace('Lifecycle#unload(): veto in renderer', window.id);
+
+				return this.handleVeto(veto);
+			}
+
+			// then check for vetos in the main side
+			return this.onBeforeUnloadWindowInMain(window, windowUnloadReason).then(veto => {
+				if (veto) {
+					this.logService.trace('Lifecycle#unload(): veto in main', window.id);
+
+					return this.handleVeto(veto);
+				} else {
+					this.logService.trace('Lifecycle#unload(): unload continues without veto', window.id);
+				}
+
+				// finally if there are no vetos, unload the renderer
+				return this.onWillUnloadWindowInRenderer(window, windowUnloadReason).then(() => false);
+			});
+		});
+	}
+
+	private handleVeto(veto: boolean): boolean {
+
+		// Any cancellation also cancels a pending quit if present
+		if (veto && this.pendingQuitPromiseComplete) {
+			this.pendingQuitPromiseComplete(true /* veto */);
+			this.pendingQuitPromiseComplete = null;
+			this.pendingQuitPromise = null;
+		}
+
+		return veto;
+	}
+
+	private onBeforeUnloadWindowInRenderer(window: ICodeWindow, reason: UnloadReason): TPromise<boolean /* veto */> {
+		return new TPromise<boolean>(c => {
 			const oneTimeEventToken = this.oneTimeListenerTokenGenerator++;
 			const okChannel = `vscode:ok${oneTimeEventToken}`;
 			const cancelChannel = `vscode:cancel${oneTimeEventToken}`;
@@ -183,18 +234,35 @@ export class LifecycleService implements ILifecycleService {
 			});
 
 			ipc.once(cancelChannel, () => {
-
-				// Any cancellation also cancels a pending quit if present
-				if (this.pendingQuitPromiseComplete) {
-					this.pendingQuitPromiseComplete(true /* veto */);
-					this.pendingQuitPromiseComplete = null;
-					this.pendingQuitPromise = null;
-				}
-
 				c(true); // veto
 			});
 
-			codeWindow.send('vscode:beforeUnload', { okChannel, cancelChannel, reason: this.quitRequested ? UnloadReason.QUIT : reason });
+			window.send('vscode:onBeforeUnload', { okChannel, cancelChannel, reason });
+		});
+	}
+
+	private onBeforeUnloadWindowInMain(window: ICodeWindow, reason: UnloadReason): TPromise<boolean /* veto */> {
+		const vetos: (boolean | TPromise<boolean>)[] = [];
+
+		this._onBeforeWindowUnload.fire({
+			reason,
+			window,
+			veto(value) {
+				vetos.push(value);
+			}
+		});
+
+		return handleVetos(vetos, err => this.logService.error(err));
+	}
+
+	private onWillUnloadWindowInRenderer(window: ICodeWindow, reason: UnloadReason): TPromise<void> {
+		return new TPromise<void>(c => {
+			const oneTimeEventToken = this.oneTimeListenerTokenGenerator++;
+			const replyChannel = `vscode:reply${oneTimeEventToken}`;
+
+			ipc.once(replyChannel, () => c(void 0));
+
+			window.send('vscode:onWillUnload', { replyChannel, reason });
 		});
 	}
 
@@ -203,7 +271,7 @@ export class LifecycleService implements ILifecycleService {
 	 * by the user or not.
 	 */
 	public quit(fromUpdate?: boolean): TPromise<boolean /* veto */> {
-		this.logService.log('Lifecycle#quit()');
+		this.logService.trace('Lifecycle#quit()');
 
 		if (!this.pendingQuitPromise) {
 			this.pendingQuitPromise = new TPromise<boolean>(c => {
@@ -214,7 +282,7 @@ export class LifecycleService implements ILifecycleService {
 				app.once('will-quit', () => {
 					if (this.pendingQuitPromiseComplete) {
 						if (fromUpdate) {
-							this.storageService.setItem(LifecycleService.QUIT_FROM_RESTART_MARKER, true);
+							this.stateService.setItem(LifecycleService.QUIT_FROM_RESTART_MARKER, true);
 						}
 
 						this.pendingQuitPromiseComplete(false /* no veto */);
@@ -231,10 +299,14 @@ export class LifecycleService implements ILifecycleService {
 	}
 
 	public kill(code?: number): void {
+		this.logService.trace('Lifecycle#kill()');
+
 		app.exit(code);
 	}
 
 	public relaunch(options?: { addArgs?: string[], removeArgs?: string[] }): void {
+		this.logService.trace('Lifecycle#relaunch()');
+
 		const args = process.argv.slice(1);
 		if (options && options.addArgs) {
 			args.push(...options.addArgs);
@@ -249,16 +321,16 @@ export class LifecycleService implements ILifecycleService {
 			}
 		}
 
-		let vetod = false;
+		let vetoed = false;
 		app.once('quit', () => {
-			if (!vetod) {
-				this.storageService.setItem(LifecycleService.QUIT_FROM_RESTART_MARKER, true);
+			if (!vetoed) {
+				this.stateService.setItem(LifecycleService.QUIT_FROM_RESTART_MARKER, true);
 				app.relaunch({ args });
 			}
 		});
 
 		this.quit().then(veto => {
-			vetod = veto;
+			vetoed = veto;
 		});
 	}
 

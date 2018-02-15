@@ -10,31 +10,33 @@ import nls = require('vs/nls');
 import { Action } from 'vs/base/common/actions';
 import { IQuickOpenService } from 'vs/platform/quickOpen/common/quickOpen';
 import { IKeybindingService } from 'vs/platform/keybinding/common/keybinding';
-import { ContextKeyExpr } from "vs/platform/contextkey/common/contextkey";
-import { ICommandHandler } from "vs/platform/commands/common/commands";
+import { ContextKeyExpr } from 'vs/platform/contextkey/common/contextkey';
+import { ICommandHandler, CommandsRegistry } from 'vs/platform/commands/common/commands';
+import { ServicesAccessor } from 'vs/platform/instantiation/common/instantiation';
 
 export const inQuickOpenContext = ContextKeyExpr.has('inQuickOpen');
 export const defaultQuickOpenContextKey = 'inFilesPicker';
 export const defaultQuickOpenContext = ContextKeyExpr.and(inQuickOpenContext, ContextKeyExpr.has(defaultQuickOpenContextKey));
 
-export class GlobalQuickOpenAction extends Action {
+export const QUICKOPEN_ACTION_ID = 'workbench.action.quickOpen';
+export const QUICKOPEN_ACION_LABEL = nls.localize('quickOpen', "Go to File...");
 
-	public static ID = 'workbench.action.quickOpen';
-	public static LABEL = nls.localize('quickOpen', "Go to File...");
+CommandsRegistry.registerCommand(QUICKOPEN_ACTION_ID, function (accessor: ServicesAccessor, prefix: string = null) {
+	const quickOpenService = accessor.get(IQuickOpenService);
 
-	constructor(id: string, label: string, @IQuickOpenService private quickOpenService: IQuickOpenService) {
-		super(id, label);
+	return quickOpenService.show(typeof prefix === 'string' ? prefix : null).then(() => {
+		return void 0;
+	});
+});
 
-		this.order = 100; // Allow other actions to position before or after
-		this.class = 'quickopen';
-	}
+export const QUICKOPEN_FOCUS_SECONDARY_ACTION_ID = 'workbench.action.quickOpenPreviousEditor';
+CommandsRegistry.registerCommand(QUICKOPEN_FOCUS_SECONDARY_ACTION_ID, function (accessor: ServicesAccessor, prefix: string = null) {
+	const quickOpenService = accessor.get(IQuickOpenService);
 
-	public run(): TPromise<any> {
-		this.quickOpenService.show(null);
-
-		return TPromise.as(true);
-	}
-}
+	return quickOpenService.show(null, { autoFocus: { autoFocusSecondEntry: true } }).then(() => {
+		return void 0;
+	});
+});
 
 export class BaseQuickOpenNavigateAction extends Action {
 
@@ -73,8 +75,8 @@ export function getQuickNavigateHandler(id: string, next?: boolean): ICommandHan
 
 export class QuickOpenNavigateNextAction extends BaseQuickOpenNavigateAction {
 
-	public static ID = 'workbench.action.quickOpenNavigateNext';
-	public static LABEL = nls.localize('quickNavigateNext', "Navigate Next in Quick Open");
+	public static readonly ID = 'workbench.action.quickOpenNavigateNext';
+	public static readonly LABEL = nls.localize('quickNavigateNext', "Navigate Next in Quick Open");
 
 	constructor(
 		id: string,
@@ -88,8 +90,8 @@ export class QuickOpenNavigateNextAction extends BaseQuickOpenNavigateAction {
 
 export class QuickOpenNavigatePreviousAction extends BaseQuickOpenNavigateAction {
 
-	public static ID = 'workbench.action.quickOpenNavigatePrevious';
-	public static LABEL = nls.localize('quickNavigatePrevious', "Navigate Previous in Quick Open");
+	public static readonly ID = 'workbench.action.quickOpenNavigatePrevious';
+	public static readonly LABEL = nls.localize('quickNavigatePrevious', "Navigate Previous in Quick Open");
 
 	constructor(
 		id: string,
@@ -103,8 +105,8 @@ export class QuickOpenNavigatePreviousAction extends BaseQuickOpenNavigateAction
 
 export class QuickOpenSelectNextAction extends BaseQuickOpenNavigateAction {
 
-	public static ID = 'workbench.action.quickOpenSelectNext';
-	public static LABEL = nls.localize('quickSelectNext', "Select Next in Quick Open");
+	public static readonly ID = 'workbench.action.quickOpenSelectNext';
+	public static readonly LABEL = nls.localize('quickSelectNext', "Select Next in Quick Open");
 
 	constructor(
 		id: string,
@@ -118,8 +120,8 @@ export class QuickOpenSelectNextAction extends BaseQuickOpenNavigateAction {
 
 export class QuickOpenSelectPreviousAction extends BaseQuickOpenNavigateAction {
 
-	public static ID = 'workbench.action.quickOpenSelectPrevious';
-	public static LABEL = nls.localize('quickSelectPrevious', "Select Previous in Quick Open");
+	public static readonly ID = 'workbench.action.quickOpenSelectPrevious';
+	public static readonly LABEL = nls.localize('quickSelectPrevious', "Select Previous in Quick Open");
 
 	constructor(
 		id: string,

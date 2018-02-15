@@ -7,13 +7,13 @@ import * as interfaces from './interfaces';
 import { loadMessageBundle } from 'vscode-nls';
 const localize = loadMessageBundle();
 
-export default class MergeDectorator implements vscode.Disposable {
+export default class MergeDecorator implements vscode.Disposable {
 
 	private decorations: { [key: string]: vscode.TextEditorDecorationType } = {};
 
 	private decorationUsesWholeLine: boolean = true; // Useful for debugging, set to false to see exact match ranges
 
-	private config: interfaces.IExtensionConfiguration;
+	private config?: interfaces.IExtensionConfiguration;
 	private tracker: interfaces.IDocumentMergeConflictTracker;
 	private updating = new Map<vscode.TextEditor, boolean>();
 
@@ -197,14 +197,20 @@ export default class MergeDectorator implements vscode.Disposable {
 
 			conflicts.forEach(conflict => {
 				// TODO, this could be more effective, just call getMatchPositions once with a map of decoration to position
-				pushDecoration('current.content', { range: conflict.current.decoratorContent });
-				pushDecoration('incoming.content', { range: conflict.incoming.decoratorContent });
+				if (!conflict.current.decoratorContent.isEmpty) {
+					pushDecoration('current.content', { range: conflict.current.decoratorContent });
+				}
+				if (!conflict.incoming.decoratorContent.isEmpty) {
+					pushDecoration('incoming.content', { range: conflict.incoming.decoratorContent });
+				}
 
 				conflict.commonAncestors.forEach(commonAncestorsRegion => {
-					pushDecoration('commonAncestors.content', { range: commonAncestorsRegion.decoratorContent });
+					if (!commonAncestorsRegion.decoratorContent.isEmpty) {
+						pushDecoration('commonAncestors.content', { range: commonAncestorsRegion.decoratorContent });
+					}
 				});
 
-				if (this.config.enableDecorations) {
+				if (this.config!.enableDecorations) {
 					pushDecoration('current.header', { range: conflict.current.header });
 					pushDecoration('splitter', { range: conflict.splitter });
 					pushDecoration('incoming.header', { range: conflict.incoming.header });

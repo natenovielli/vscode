@@ -20,12 +20,13 @@ var vsce = require("vsce");
 var File = require("vinyl");
 function fromLocal(extensionPath) {
     var result = es.through();
-    vsce.listFiles({ cwd: extensionPath })
+    vsce.listFiles({ cwd: extensionPath, packageManager: vsce.PackageManager.Yarn })
         .then(function (fileNames) {
         var files = fileNames
             .map(function (fileName) { return path.join(extensionPath, fileName); })
             .map(function (filePath) { return new File({
             path: filePath,
+            stat: fs.statSync(filePath),
             base: extensionPath,
             contents: fs.createReadStream(filePath)
         }); });

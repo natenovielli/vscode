@@ -7,26 +7,30 @@
 
 import URI from 'vs/base/common/uri';
 import paths = require('vs/base/common/paths');
+import resources = require('vs/base/common/resources');
 import { ResourceMap } from 'vs/base/common/map';
 import { isLinux } from 'vs/base/common/platform';
-import { IFileStat, isParent } from 'vs/platform/files/common/files';
+import { IFileStat } from 'vs/platform/files/common/files';
 import { IEditorInput } from 'vs/platform/editor/common/editor';
 import { IWorkspaceContextService } from 'vs/platform/workspace/common/workspace';
-import { IEditorGroup, toResource } from 'vs/workbench/common/editor';
-
-export enum StatType {
-	FILE,
-	FOLDER,
-	ANY
-}
+import { IEditorGroup, toResource, IEditorIdentifier } from 'vs/workbench/common/editor';
+import { IDisposable, dispose } from 'vs/base/common/lifecycle';
+import { getPathLabel } from 'vs/base/common/labels';
+import { Schemas } from 'vs/base/common/network';
 
 export class Model {
 
 	private _roots: FileStat[];
+	private _listener: IDisposable;
 
 	constructor( @IWorkspaceContextService private contextService: IWorkspaceContextService) {
-		const setRoots = () => this._roots = this.contextService.getWorkspace2().roots.map(uri => new FileStat(uri, uri));
-		this.contextService.onDidChangeWorkspaceRoots(() => setRoots());
+		const setRoots = () => this._roots = this.contextService.getWorkspace().folders.map(folder => {
+			const root = new FileStat(folder.uri, undefined);
+			root.name = folder.name;
+
+			return root;
+		});
+		this._listener = this.contextService.onDidChangeWorkspaceFolders(() => setRoots());
 		setRoots();
 	}
 
@@ -35,23 +39,33 @@ export class Model {
 	}
 
 	/**
-	 * Returns a child stat from this stat that matches with the provided path.
+	 * Returns an array of child stat from this stat that matches with the provided path.
 	 * Starts matching from the first root.
-	 * Will return "null" in case the child does not exist.
+	 * Will return empty array in case the FileStat does not exist.
 	 */
 	public findAll(resource: URI): FileStat[] {
 		return this.roots.map(root => root.find(resource)).filter(stat => !!stat);
 	}
 
-	public findFirst(resource: URI): FileStat {
-		for (let root of this.roots) {
-			const result = root.find(resource);
-			if (result) {
-				return result;
+	/**
+	 * Returns a FileStat that matches the passed resource.
+	 * In case multiple FileStat are matching the resource (same folder opened multiple times) returns the FileStat that has the closest root.
+	 * Will return null in case the FileStat does not exist.
+	 */
+	public findClosest(resource: URI): FileStat {
+		const folder = this.contextService.getWorkspaceFolder(resource);
+		if (folder) {
+			const root = this.roots.filter(r => r.resource.toString() === folder.uri.toString()).pop();
+			if (root) {
+				return root.find(resource);
 			}
 		}
 
 		return null;
+	}
+
+	public dispose(): void {
+		this._listener = dispose(this._listener);
 	}
 }
 
@@ -60,27 +74,44 @@ export class FileStat implements IFileStat {
 	public name: string;
 	public mtime: number;
 	public etag: string;
-	public isDirectory: boolean;
-	public hasChildren: boolean;
+	private _isDirectory: boolean;
 	public children: FileStat[];
 	public parent: FileStat;
 
 	public isDirectoryResolved: boolean;
 
-	constructor(resource: URI, public root: URI, isDirectory?: boolean, hasChildren?: boolean, name: string = paths.basename(resource.fsPath), mtime?: number, etag?: string) {
+	constructor(resource: URI, public root: FileStat, isDirectory?: boolean, name: string = getPathLabel(resource), mtime?: number, etag?: string) {
 		this.resource = resource;
 		this.name = name;
 		this.isDirectory = !!isDirectory;
-		this.hasChildren = isDirectory && hasChildren;
 		this.etag = etag;
 		this.mtime = mtime;
 
-		// Prepare child stat array
-		if (this.isDirectory) {
-			this.children = [];
+		if (!this.root) {
+			this.root = this;
 		}
 
 		this.isDirectoryResolved = false;
+	}
+
+	public get isDirectory(): boolean {
+		return this._isDirectory;
+	}
+
+	public set isDirectory(value: boolean) {
+		if (value !== this._isDirectory) {
+			this._isDirectory = value;
+			if (this._isDirectory) {
+				this.children = [];
+			} else {
+				this.children = undefined;
+			}
+		}
+
+	}
+
+	public get nonexistentRoot(): boolean {
+		return this.isRoot && !this.isDirectoryResolved && this.isDirectory;
 	}
 
 	public getId(): string {
@@ -88,11 +119,11 @@ export class FileStat implements IFileStat {
 	}
 
 	public get isRoot(): boolean {
-		return this.resource.toString() === this.root.toString();
+		return this.resource.toString() === this.root.resource.toString();
 	}
 
-	public static create(raw: IFileStat, root: URI, resolveTo?: URI[]): FileStat {
-		const stat = new FileStat(raw.resource, root, raw.isDirectory, raw.hasChildren, raw.name, raw.mtime, raw.etag);
+	public static create(raw: IFileStat, root: FileStat, resolveTo?: URI[]): FileStat {
+		const stat = new FileStat(raw.resource, root, raw.isDirectory, raw.name, raw.mtime, raw.etag);
 
 		// Recursively add children if present
 		if (stat.isDirectory) {
@@ -101,7 +132,7 @@ export class FileStat implements IFileStat {
 			// the folder is fully resolved if either it has a list of children or the client requested this by using the resolveTo
 			// array of resource path to resolve.
 			stat.isDirectoryResolved = !!raw.children || (!!resolveTo && resolveTo.some((r) => {
-				return paths.isEqualOrParent(r.fsPath, stat.resource.fsPath, !isLinux /* ignorecase */);
+				return resources.isEqualOrParent(r, stat.resource, !isLinux /* ignorecase */);
 			}));
 
 			// Recurse into children
@@ -110,7 +141,6 @@ export class FileStat implements IFileStat {
 					const child = FileStat.create(raw.children[i], root, resolveTo);
 					child.parent = stat;
 					stat.children.push(child);
-					stat.hasChildren = stat.children.length > 0;
 				}
 			}
 		}
@@ -138,7 +168,6 @@ export class FileStat implements IFileStat {
 		local.resource = disk.resource;
 		local.name = disk.name;
 		local.isDirectory = disk.isDirectory;
-		local.hasChildren = disk.isDirectory && disk.hasChildren;
 		local.mtime = disk.mtime;
 		local.isDirectoryResolved = disk.isDirectoryResolved;
 
@@ -186,34 +215,6 @@ export class FileStat implements IFileStat {
 		child.updateResource(false);
 
 		this.children.push(child);
-		this.hasChildren = this.children.length > 0;
-	}
-
-	/**
-	 * Returns true if this stat is a directory that contains a child with the given name.
-	 *
-	 * @param ignoreCase if true, will check for the name ignoring case.
-	 * @param type the type of stat to check for.
-	 */
-	public hasChild(name: string, ignoreCase?: boolean, type: StatType = StatType.ANY): boolean {
-		for (let i = 0; i < this.children.length; i++) {
-			const child = this.children[i];
-			if ((type === StatType.FILE && child.isDirectory) || (type === StatType.FOLDER && !child.isDirectory)) {
-				continue;
-			}
-
-			// Check for Identity
-			if (child.name === name) {
-				return true;
-			}
-
-			// Also consider comparing without case
-			if (ignoreCase && child.name.toLowerCase() === name.toLowerCase()) {
-				return true;
-			}
-		}
-
-		return false;
 	}
 
 	/**
@@ -226,8 +227,6 @@ export class FileStat implements IFileStat {
 				break;
 			}
 		}
-
-		this.hasChildren = this.children.length > 0;
 	}
 
 	/**
@@ -251,10 +250,10 @@ export class FileStat implements IFileStat {
 	}
 
 	private updateResource(recursive: boolean): void {
-		this.resource = URI.file(paths.join(this.parent.resource.fsPath, this.name));
+		this.resource = this.parent.resource.with({ path: paths.join(this.parent.resource.path, this.name) });
 
 		if (recursive) {
-			if (this.isDirectory && this.hasChildren && this.children) {
+			if (this.isDirectory && this.children) {
 				this.children.forEach((child: FileStat) => {
 					child.updateResource(true);
 				});
@@ -283,23 +282,23 @@ export class FileStat implements IFileStat {
 	public find(resource: URI): FileStat {
 
 		// Return if path found
-		if (paths.isEqual(resource.fsPath, this.resource.fsPath, !isLinux /* ignorecase */)) {
+		if (resources.isEqual(resource, this.resource, !isLinux /* ignorecase */)) {
 			return this;
 		}
 
 		// Return if not having any children
-		if (!this.hasChildren) {
+		if (!this.children) {
 			return null;
 		}
 
 		for (let i = 0; i < this.children.length; i++) {
 			const child = this.children[i];
 
-			if (paths.isEqual(resource.fsPath, child.resource.fsPath, !isLinux /* ignorecase */)) {
+			if (resources.isEqual(resource, child.resource, !isLinux /* ignorecase */)) {
 				return child;
 			}
 
-			if (child.isDirectory && isParent(resource.fsPath, child.resource.fsPath, !isLinux /* ignorecase */)) {
+			if (child.isDirectory && resources.isEqualOrParent(resource, child.resource, !isLinux /* ignorecase */)) {
 				return child.find(resource);
 			}
 		}
@@ -316,8 +315,8 @@ export class NewStatPlaceholder extends FileStat {
 	private id: number;
 	private directoryPlaceholder: boolean;
 
-	constructor(isDirectory: boolean) {
-		super(URI.file(''), URI.file(''));
+	constructor(isDirectory: boolean, root: FileStat) {
+		super(URI.file(''), root, false, '');
 
 		this.id = NewStatPlaceholder.ID++;
 		this.isDirectoryResolved = isDirectory;
@@ -330,7 +329,6 @@ export class NewStatPlaceholder extends FileStat {
 		this.isDirectoryResolved = void 0;
 		this.name = void 0;
 		this.isDirectory = void 0;
-		this.hasChildren = void 0;
 		this.mtime = void 0;
 	}
 
@@ -344,10 +342,6 @@ export class NewStatPlaceholder extends FileStat {
 
 	public addChild(child: NewStatPlaceholder): void {
 		throw new Error('Can\'t perform operations in NewStatPlaceholder.');
-	}
-
-	public hasChild(name: string, ignoreCase?: boolean): boolean {
-		return false;
 	}
 
 	public removeChild(child: NewStatPlaceholder): void {
@@ -367,30 +361,32 @@ export class NewStatPlaceholder extends FileStat {
 	}
 
 	public static addNewStatPlaceholder(parent: FileStat, isDirectory: boolean): NewStatPlaceholder {
-		const child = new NewStatPlaceholder(isDirectory);
+		const child = new NewStatPlaceholder(isDirectory, parent.root);
 
 		// Inherit some parent properties to child
 		child.parent = parent;
 		parent.children.push(child);
 
-		parent.hasChildren = parent.children.length > 0;
-
 		return child;
 	}
 }
 
-export class OpenEditor {
+export class OpenEditor implements IEditorIdentifier {
 
-	constructor(private editor: IEditorInput, private group: IEditorGroup) {
+	constructor(private _editor: IEditorInput, private _group: IEditorGroup) {
 		// noop
 	}
 
-	public get editorInput() {
-		return this.editor;
+	public get editor() {
+		return this._editor;
 	}
 
-	public get editorGroup() {
-		return this.group;
+	public get editorIndex() {
+		return this._group.indexOf(this.editor);
+	}
+
+	public get group() {
+		return this._group;
 	}
 
 	public getId(): string {
@@ -402,7 +398,7 @@ export class OpenEditor {
 	}
 
 	public isUntitled(): boolean {
-		return !!toResource(this.editor, { supportSideBySide: true, filter: 'untitled' });
+		return !!toResource(this.editor, { supportSideBySide: true, filter: Schemas.untitled });
 	}
 
 	public isDirty(): boolean {
@@ -410,6 +406,6 @@ export class OpenEditor {
 	}
 
 	public getResource(): URI {
-		return toResource(this.editor, { supportSideBySide: true, filter: ['file', 'untitled'] });
+		return toResource(this.editor, { supportSideBySide: true });
 	}
 }

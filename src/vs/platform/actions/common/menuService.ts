@@ -16,13 +16,13 @@ export class MenuService implements IMenuService {
 	_serviceBrand: any;
 
 	constructor(
-		@IExtensionService private _extensionService: IExtensionService,
-		@ICommandService private _commandService: ICommandService
+		@IExtensionService private readonly _extensionService: IExtensionService,
+		@ICommandService private readonly _commandService: ICommandService
 	) {
 		//
 	}
 
 	createMenu(id: MenuId, contextKeyService: IContextKeyService): IMenu {
-		return new Menu(id, this._extensionService.onReady(), this._commandService, contextKeyService);
+		return new Menu(id, this._extensionService.whenInstalledExtensionsRegistered(), this._commandService, contextKeyService);
 	}
 }

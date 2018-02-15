@@ -4,36 +4,46 @@
  *--------------------------------------------------------------------------------------------*/
 
 import uri from 'vs/base/common/uri';
-import Event from 'vs/base/common/event';
+import Event, { Emitter } from 'vs/base/common/event';
 import { TPromise } from 'vs/base/common/winjs.base';
-import * as debug from 'vs/workbench/parts/debug/common/debug';
+import { IWorkspaceFolder } from 'vs/platform/workspace/common/workspace';
+import { ILaunch, IDebugService, State, DebugEvent, IProcess, IConfigurationManager, IStackFrame, IBreakpointData, IBreakpointUpdateData, IConfig, IModel, IViewModel, ISession } from 'vs/workbench/parts/debug/common/debug';
 
-export class MockDebugService implements debug.IDebugService {
+export class MockDebugService implements IDebugService {
 	public _serviceBrand: any;
 
-	public get state(): debug.State {
+	public get state(): State {
 		return null;
 	}
 
-	public get onDidEndProcess(): Event<debug.IProcess> {
+	public get onDidCustomEvent(): Event<DebugEvent> {
 		return null;
 	}
 
-	public get onDidChangeState(): Event<debug.State> {
+	public get onDidNewProcess(): Event<IProcess> {
 		return null;
 	}
 
-	public getConfigurationManager(): debug.IConfigurationManager {
+	public get onDidEndProcess(): Event<IProcess> {
 		return null;
 	}
 
-	public focusStackFrameAndEvaluate(focusedStackFrame: debug.IStackFrame): TPromise<void> {
+	public get onDidChangeState(): Event<State> {
+		return null;
+	}
+
+	public getConfigurationManager(): IConfigurationManager {
+		return null;
+	}
+
+	public focusStackFrame(focusedStackFrame: IStackFrame): void {
+	}
+
+	public addBreakpoints(uri: uri, rawBreakpoints: IBreakpointData[]): TPromise<void> {
 		return TPromise.as(null);
 	}
 
-	public addBreakpoints(uri: uri, rawBreakpoints: debug.IRawBreakpoint[]): TPromise<void> {
-		return TPromise.as(null);
-	}
+	public updateBreakpoints(uri: uri, data: { [id: string]: IBreakpointUpdateData }, sendOnResourceSaved: boolean): void { }
 
 	public enableOrDisableBreakpoints(enabled: boolean): TPromise<void> {
 		return TPromise.as(null);
@@ -75,11 +85,7 @@ export class MockDebugService implements debug.IDebugService {
 
 	public removeWatchExpressions(id?: string): void { }
 
-	public startDebugging(configName?: string, noDebug?: boolean): TPromise<any> {
-		return TPromise.as(null);
-	}
-
-	public createProcess(config: debug.IConfig): TPromise<any> {
+	public startDebugging(launch: ILaunch, configOrName?: IConfig | string, noDebug?: boolean): TPromise<any> {
 		return TPromise.as(null);
 	}
 
@@ -91,11 +97,11 @@ export class MockDebugService implements debug.IDebugService {
 		return TPromise.as(null);
 	}
 
-	public getModel(): debug.IModel {
+	public getModel(): IModel {
 		return null;
 	}
 
-	public getViewModel(): debug.IViewModel {
+	public getViewModel(): IViewModel {
 		return null;
 	}
 
@@ -104,13 +110,15 @@ export class MockDebugService implements debug.IDebugService {
 	public sourceIsNotAvailable(uri: uri): void { }
 }
 
-export class MockSession implements debug.ISession {
+export class MockSession implements ISession {
 	public readyForBreakpoints = true;
 	public emittedStopped = true;
 
 	public getId() {
 		return 'mockrawsession';
 	}
+
+	public root: IWorkspaceFolder;
 
 	public getLengthInSeconds(): number {
 		return 100;
@@ -158,9 +166,20 @@ export class MockSession implements debug.ISession {
 		return {};
 	}
 
-	public get onDidEvent(): Event<DebugProtocol.Event> {
+	public get onDidEvent(): Event<DebugEvent> {
 		return null;
 	}
+
+	public get onDidInitialize(): Event<DebugProtocol.InitializedEvent> {
+		const emitter = new Emitter<DebugProtocol.InitializedEvent>();
+		return emitter.event;
+	}
+
+	public get onDidExitAdapter(): Event<DebugEvent> {
+		const emitter = new Emitter<DebugEvent>();
+		return emitter.event;
+	}
+
 
 	public custom(request: string, args: any): TPromise<DebugProtocol.Response> {
 		return TPromise.as(null);

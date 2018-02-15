@@ -7,12 +7,22 @@
 
 import * as assert from 'assert';
 import { normalize } from 'path';
+import path = require('path');
 
 import { IProgress, IUncachedSearchStats } from 'vs/platform/search/common/search';
-import { ISearchEngine, IRawSearch, IRawFileMatch, ISerializedFileMatch, ISerializedSearchComplete } from 'vs/workbench/services/search/node/search';
+import { ISearchEngine, IRawSearch, IRawFileMatch, ISerializedFileMatch, ISerializedSearchComplete, IFolderSearch } from 'vs/workbench/services/search/node/search';
 import { SearchService as RawSearchService } from 'vs/workbench/services/search/node/rawSearchService';
 import { DiskSearch } from 'vs/workbench/services/search/node/searchService';
 
+const TEST_FOLDER_QUERIES = [
+	{ folder: normalize('/some/where') }
+];
+
+const TEST_FIXTURES = path.normalize(require.toUrl('./fixtures'));
+const MULTIROOT_QUERIES: IFolderSearch[] = [
+	{ folder: path.join(TEST_FIXTURES, 'examples') },
+	{ folder: path.join(TEST_FIXTURES, 'more') }
+];
 
 const stats: IUncachedSearchStats = {
 	fromCache: false,
@@ -65,10 +75,12 @@ class TestSearchEngine implements ISearchEngine<IRawFileMatch> {
 	}
 }
 
+const testTimeout = 5000;
+
 suite('SearchService', () => {
 
 	const rawSearch: IRawSearch = {
-		rootFolders: [normalize('/some/where')],
+		folderQueries: TEST_FOLDER_QUERIES,
 		filePattern: 'a'
 	};
 
@@ -84,6 +96,7 @@ suite('SearchService', () => {
 	};
 
 	test('Individual results', function () {
+		this.timeout(testTimeout);
 		let i = 5;
 		const Engine = TestSearchEngine.bind(null, () => i-- && rawMatch);
 		const service = new RawSearchService();
@@ -103,6 +116,7 @@ suite('SearchService', () => {
 	});
 
 	test('Batch results', function () {
+		this.timeout(testTimeout);
 		let i = 25;
 		const Engine = TestSearchEngine.bind(null, () => i-- && rawMatch);
 		const service = new RawSearchService();
@@ -124,6 +138,7 @@ suite('SearchService', () => {
 	});
 
 	test('Collect batched results', function () {
+		this.timeout(testTimeout);
 		const uriPath = '/some/where';
 		let i = 25;
 		const Engine = TestSearchEngine.bind(null, () => i-- && rawMatch);
@@ -140,7 +155,47 @@ suite('SearchService', () => {
 			});
 	});
 
+	test('Multi-root with include pattern and maxResults', function () {
+		this.timeout(testTimeout);
+		const service = new RawSearchService();
+
+		const query: IRawSearch = {
+			folderQueries: MULTIROOT_QUERIES,
+			maxResults: 1,
+			includePattern: {
+				'*.txt': true,
+				'*.js': true
+			},
+		};
+
+		return DiskSearch.collectResults(service.fileSearch(query))
+			.then(result => {
+				assert.strictEqual(result.results.length, 1, 'Result');
+			});
+	});
+
+	test('Multi-root with include pattern and exists', function () {
+		this.timeout(testTimeout);
+		const service = new RawSearchService();
+
+		const query: IRawSearch = {
+			folderQueries: MULTIROOT_QUERIES,
+			exists: true,
+			includePattern: {
+				'*.txt': true,
+				'*.js': true
+			},
+		};
+
+		return DiskSearch.collectResults(service.fileSearch(query))
+			.then(result => {
+				assert.strictEqual(result.results.length, 0, 'Result');
+				assert.ok(result.limitHit);
+			});
+	});
+
 	test('Sorted results', function () {
+		this.timeout(testTimeout);
 		const paths = ['bab', 'bbc', 'abb'];
 		const matches: IRawFileMatch[] = paths.map(relativePath => ({
 			base: normalize('/some/where'),
@@ -153,7 +208,7 @@ suite('SearchService', () => {
 
 		const results = [];
 		return service.doFileSearch(Engine, {
-			rootFolders: [normalize('/some/where')],
+			folderQueries: TEST_FOLDER_QUERIES,
 			filePattern: 'bb',
 			sortByScore: true,
 			maxResults: 2
@@ -170,13 +225,14 @@ suite('SearchService', () => {
 	});
 
 	test('Sorted result batches', function () {
+		this.timeout(testTimeout);
 		let i = 25;
 		const Engine = TestSearchEngine.bind(null, () => i-- && rawMatch);
 		const service = new RawSearchService();
 
 		const results = [];
 		return service.doFileSearch(Engine, {
-			rootFolders: [normalize('/some/where')],
+			folderQueries: TEST_FOLDER_QUERIES,
 			filePattern: 'a',
 			sortByScore: true,
 			maxResults: 23
@@ -196,6 +252,7 @@ suite('SearchService', () => {
 	});
 
 	test('Cached results', function () {
+		this.timeout(testTimeout);
 		const paths = ['bcb', 'bbc', 'aab'];
 		const matches: IRawFileMatch[] = paths.map(relativePath => ({
 			base: normalize('/some/where'),
@@ -208,7 +265,7 @@ suite('SearchService', () => {
 
 		const results = [];
 		return service.doFileSearch(Engine, {
-			rootFolders: [normalize('/some/where')],
+			folderQueries: TEST_FOLDER_QUERIES,
 			filePattern: 'b',
 			sortByScore: true,
 			cacheKey: 'x'
@@ -224,7 +281,7 @@ suite('SearchService', () => {
 		}).then(() => {
 			const results = [];
 			return service.doFileSearch(Engine, {
-				rootFolders: [normalize('/some/where')],
+				folderQueries: TEST_FOLDER_QUERIES,
 				filePattern: 'bc',
 				sortByScore: true,
 				cacheKey: 'x'
@@ -249,7 +306,7 @@ suite('SearchService', () => {
 			});
 			const results = [];
 			return service.doFileSearch(Engine, {
-				rootFolders: [normalize('/some/where')],
+				folderQueries: TEST_FOLDER_QUERIES,
 				filePattern: 'bc',
 				sortByScore: true,
 				cacheKey: 'x'

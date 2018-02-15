@@ -12,9 +12,14 @@ import * as paths from 'vs/base/common/paths';
 import * as platform from 'vs/base/common/platform';
 import * as types from 'vs/base/common/types';
 import { ParsedArgs } from 'vs/platform/environment/common/environment';
-import { realpathSync } from "vs/base/node/extfs";
+import { realpathSync } from 'vs/base/node/extfs';
 
 export function validatePaths(args: ParsedArgs): ParsedArgs {
+	// Track URLs if they're going to be used
+	if (args['open-url']) {
+		args._urls = args._;
+		args._ = [];
+	}
 
 	// Realpath/normalize paths and watch out for goto line mode
 	const paths = doValidatePaths(args._, args.goto);

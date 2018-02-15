@@ -9,156 +9,211 @@ import * as path from 'path';
 import * as nls from 'vs/nls';
 import * as arrays from 'vs/base/common/arrays';
 import { trim } from 'vs/base/common/strings';
-import { IStorageService } from 'vs/platform/storage/node/storage';
+import { IStateService } from 'vs/platform/state/common/state';
 import { app } from 'electron';
 import { ILogService } from 'vs/platform/log/common/log';
-import { getPathLabel } from 'vs/base/common/labels';
+import { getPathLabel, getBaseLabel } from 'vs/base/common/labels';
 import { IPath } from 'vs/platform/windows/common/windows';
 import CommonEvent, { Emitter } from 'vs/base/common/event';
-import { createDecorator } from "vs/platform/instantiation/common/instantiation";
-import { isWindows, isMacintosh, isLinux } from "vs/base/common/platform";
-
-export const IHistoryMainService = createDecorator<IHistoryMainService>('historyMainService');
-
-export interface IRecentPathsList {
-	folders: string[];
-	files: string[];
-}
-
-export interface IHistoryMainService {
-	_serviceBrand: any;
-
-	// events
-	onRecentPathsChange: CommonEvent<void>;
-
-	// methods
-
-	addToRecentPathsList(paths: { path: string; isFile?: boolean; }[]): void;
-	getRecentPathsList(workspacePath?: string, filesToOpen?: IPath[]): IRecentPathsList;
-	removeFromRecentPathsList(path: string): void;
-	removeFromRecentPathsList(paths: string[]): void;
-	clearRecentPathsList(): void;
-	updateWindowsJumpList(): void;
-}
+import { isWindows, isMacintosh, isLinux } from 'vs/base/common/platform';
+import { IWorkspaceIdentifier, IWorkspacesMainService, getWorkspaceLabel, ISingleFolderWorkspaceIdentifier, isSingleFolderWorkspaceIdentifier, IWorkspaceSavedEvent } from 'vs/platform/workspaces/common/workspaces';
+import { IHistoryMainService, IRecentlyOpened } from 'vs/platform/history/common/history';
+import { IEnvironmentService } from 'vs/platform/environment/common/environment';
+import { isEqual } from 'vs/base/common/paths';
+import { RunOnceScheduler } from 'vs/base/common/async';
 
 export class HistoryMainService implements IHistoryMainService {
 
-	private static MAX_TOTAL_RECENT_ENTRIES = 100;
+	private static readonly MAX_TOTAL_RECENT_ENTRIES = 100;
+	private static readonly MAX_MACOS_DOCK_RECENT_ENTRIES = 10;
 
-	private static recentPathsListStorageKey = 'openedPathsList';
+	private static readonly recentlyOpenedStorageKey = 'openedPathsList';
 
 	_serviceBrand: any;
 
-	private _onRecentPathsChange = new Emitter<void>();
-	onRecentPathsChange: CommonEvent<void> = this._onRecentPathsChange.event;
+	private _onRecentlyOpenedChange = new Emitter<void>();
+	onRecentlyOpenedChange: CommonEvent<void> = this._onRecentlyOpenedChange.event;
+
+	private macOSRecentDocumentsUpdater: RunOnceScheduler;
 
 	constructor(
-		@IStorageService private storageService: IStorageService,
-		@ILogService private logService: ILogService
+		@IStateService private stateService: IStateService,
+		@ILogService private logService: ILogService,
+		@IWorkspacesMainService private workspacesMainService: IWorkspacesMainService,
+		@IEnvironmentService private environmentService: IEnvironmentService,
 	) {
+		this.macOSRecentDocumentsUpdater = new RunOnceScheduler(() => this.updateMacOSRecentDocuments(), 800);
+
+		this.registerListeners();
 	}
 
-	public addToRecentPathsList(paths: { path: string; isFile?: boolean; }[]): void {
-		if (!paths || !paths.length) {
-			return;
-		}
+	private registerListeners(): void {
+		this.workspacesMainService.onWorkspaceSaved(e => this.onWorkspaceSaved(e));
+	}
 
-		const mru = this.getRecentPathsList();
-		paths.forEach(p => {
-			const { path, isFile } = p;
+	private onWorkspaceSaved(e: IWorkspaceSavedEvent): void {
 
-			if (isFile) {
+		// Make sure to add newly saved workspaces to the list of recent workspaces
+		this.addRecentlyOpened([e.workspace], []);
+	}
+
+	public addRecentlyOpened(workspaces: (IWorkspaceIdentifier | ISingleFolderWorkspaceIdentifier)[], files: string[]): void {
+		if ((workspaces && workspaces.length > 0) || (files && files.length > 0)) {
+			const mru = this.getRecentlyOpened();
+
+			// Workspaces
+			workspaces.forEach(workspace => {
+				const isUntitledWorkspace = !isSingleFolderWorkspaceIdentifier(workspace) && this.workspacesMainService.isUntitledWorkspace(workspace);
+				if (isUntitledWorkspace) {
+					return; // only store saved workspaces
+				}
+
+				mru.workspaces.unshift(workspace);
+				mru.workspaces = arrays.distinct(mru.workspaces, workspace => this.distinctFn(workspace));
+
+				// We do not add to recent documents here because on Windows we do this from a custom
+				// JumpList and on macOS we fill the recent documents in one go from all our data later.
+			});
+
+			// Files
+			files.forEach((path) => {
 				mru.files.unshift(path);
-				mru.files = arrays.distinct(mru.files, (f) => isLinux ? f : f.toLowerCase());
-			} else {
-				mru.folders.unshift(path);
-				mru.folders = arrays.distinct(mru.folders, (f) => isLinux ? f : f.toLowerCase());
-			}
+				mru.files = arrays.distinct(mru.files, file => this.distinctFn(file));
+
+				// Add to recent documents (Windows only, macOS later)
+				if (isWindows) {
+					app.addRecentDocument(path);
+				}
+			});
 
 			// Make sure its bounded
-			mru.folders = mru.folders.slice(0, HistoryMainService.MAX_TOTAL_RECENT_ENTRIES);
+			mru.workspaces = mru.workspaces.slice(0, HistoryMainService.MAX_TOTAL_RECENT_ENTRIES);
 			mru.files = mru.files.slice(0, HistoryMainService.MAX_TOTAL_RECENT_ENTRIES);
 
-			// Add to recent documents (Windows/macOS only)
-			if (isMacintosh || isWindows) {
-				app.addRecentDocument(path);
-			}
-		});
+			this.saveRecentlyOpened(mru);
+			this._onRecentlyOpenedChange.fire();
 
-		this.storageService.setItem(HistoryMainService.recentPathsListStorageKey, mru);
-		this._onRecentPathsChange.fire();
+			// Schedule update to recent documents on macOS dock
+			if (isMacintosh) {
+				this.macOSRecentDocumentsUpdater.schedule();
+			}
+		}
 	}
 
-	public removeFromRecentPathsList(path: string): void;
-	public removeFromRecentPathsList(paths: string[]): void;
-	public removeFromRecentPathsList(arg1: any): void {
-		let paths: string[];
-		if (Array.isArray(arg1)) {
-			paths = arg1;
-		} else {
-			paths = [arg1];
-		}
-
-		const mru = this.getRecentPathsList();
+	public removeFromRecentlyOpened(pathsToRemove: string[]): void {
+		const mru = this.getRecentlyOpened();
 		let update = false;
 
-		paths.forEach(path => {
-			let index = mru.files.indexOf(path);
+		pathsToRemove.forEach((pathToRemove => {
+
+			// Remove workspace
+			let index = arrays.firstIndex(mru.workspaces, workspace => isEqual(isSingleFolderWorkspaceIdentifier(workspace) ? workspace : workspace.configPath, pathToRemove, !isLinux /* ignorecase */));
+			if (index >= 0) {
+				mru.workspaces.splice(index, 1);
+				update = true;
+			}
+
+			// Remove file
+			index = arrays.firstIndex(mru.files, file => isEqual(file, pathToRemove, !isLinux /* ignorecase */));
 			if (index >= 0) {
 				mru.files.splice(index, 1);
 				update = true;
 			}
-
-			index = mru.folders.indexOf(path);
-			if (index >= 0) {
-				mru.folders.splice(index, 1);
-				update = true;
-			}
-		});
+		}));
 
 		if (update) {
-			this.storageService.setItem(HistoryMainService.recentPathsListStorageKey, mru);
-			this._onRecentPathsChange.fire();
+			this.saveRecentlyOpened(mru);
+			this._onRecentlyOpenedChange.fire();
+
+			// Schedule update to recent documents on macOS dock
+			if (isMacintosh) {
+				this.macOSRecentDocumentsUpdater.schedule();
+			}
 		}
 	}
 
-	public clearRecentPathsList(): void {
-		this.storageService.setItem(HistoryMainService.recentPathsListStorageKey, { folders: [], files: [] });
+	private updateMacOSRecentDocuments(): void {
+		if (!isMacintosh) {
+			return;
+		}
+
+		// macOS recent documents in the dock are behaving strangely. the entries seem to get
+		// out of sync quickly over time. the attempted fix is to always set the list fresh
+		// from our MRU history data. So we clear the documents first and then set the documents
+		// again.
+
+		app.clearRecentDocuments();
+
+		const mru = this.getRecentlyOpened();
+
+		let maxEntries = HistoryMainService.MAX_MACOS_DOCK_RECENT_ENTRIES;
+
+		// Take up to maxEntries/2 workspaces
+		for (let i = 0; i < mru.workspaces.length && i < HistoryMainService.MAX_MACOS_DOCK_RECENT_ENTRIES / 2; i++) {
+			const workspace = mru.workspaces[i];
+			app.addRecentDocument(isSingleFolderWorkspaceIdentifier(workspace) ? workspace : workspace.configPath);
+			maxEntries--;
+		}
+
+		// Take up to maxEntries files
+		for (let i = 0; i < mru.files.length && i < maxEntries; i++) {
+			const file = mru.files[i];
+			app.addRecentDocument(file);
+		}
+	}
+
+	public clearRecentlyOpened(): void {
+		this.saveRecentlyOpened({ workspaces: [], files: [] });
 		app.clearRecentDocuments();
 
 		// Event
-		this._onRecentPathsChange.fire();
+		this._onRecentlyOpenedChange.fire();
 	}
 
-	public getRecentPathsList(workspacePath?: string, filesToOpen?: IPath[]): IRecentPathsList {
+	public getRecentlyOpened(currentWorkspace?: IWorkspaceIdentifier | ISingleFolderWorkspaceIdentifier, currentFiles?: IPath[]): IRecentlyOpened {
+		let workspaces: (IWorkspaceIdentifier | ISingleFolderWorkspaceIdentifier)[];
 		let files: string[];
-		let folders: string[];
 
 		// Get from storage
-		const storedRecents = this.storageService.getItem<IRecentPathsList>(HistoryMainService.recentPathsListStorageKey);
+		const storedRecents = this.stateService.getItem<IRecentlyOpened>(HistoryMainService.recentlyOpenedStorageKey);
 		if (storedRecents) {
+			workspaces = storedRecents.workspaces || [];
 			files = storedRecents.files || [];
-			folders = storedRecents.folders || [];
 		} else {
+			workspaces = [];
 			files = [];
-			folders = [];
+		}
+
+		// Add current workspace to beginning if set
+		if (currentWorkspace) {
+			workspaces.unshift(currentWorkspace);
 		}
 
 		// Add currently files to open to the beginning if any
-		if (filesToOpen) {
-			files.unshift(...filesToOpen.map(f => f.filePath));
-		}
-
-		// Add current workspace path to beginning if set
-		if (workspacePath) {
-			folders.unshift(workspacePath);
+		if (currentFiles) {
+			files.unshift(...currentFiles.map(f => f.filePath));
 		}
 
 		// Clear those dupes
-		files = arrays.distinct(files);
-		folders = arrays.distinct(folders);
+		workspaces = arrays.distinct(workspaces, workspace => this.distinctFn(workspace));
+		files = arrays.distinct(files, file => this.distinctFn(file));
 
-		return { files, folders };
+		// Hide untitled workspaces
+		workspaces = workspaces.filter(workspace => isSingleFolderWorkspaceIdentifier(workspace) || !this.workspacesMainService.isUntitledWorkspace(workspace));
+
+		return { workspaces, files };
+	}
+
+	private distinctFn(workspaceOrFile: IWorkspaceIdentifier | ISingleFolderWorkspaceIdentifier | string): string {
+		if (isSingleFolderWorkspaceIdentifier(workspaceOrFile)) {
+			return isLinux ? workspaceOrFile : workspaceOrFile.toLowerCase();
+		}
+
+		return workspaceOrFile.id;
+	}
+
+	private saveRecentlyOpened(recent: IRecentlyOpened): void {
+		this.stateService.setItem(HistoryMainService.recentlyOpenedStorageKey, recent);
 	}
 
 	public updateWindowsJumpList(): void {
@@ -184,26 +239,29 @@ export class HistoryMainService implements IHistoryMainService {
 			]
 		});
 
-		// Recent Folders
-		if (this.getRecentPathsList().folders.length > 0) {
+		// Recent Workspaces
+		if (this.getRecentlyOpened().workspaces.length > 0) {
 
 			// The user might have meanwhile removed items from the jump list and we have to respect that
 			// so we need to update our list of recent paths with the choice of the user to not add them again
 			// Also: Windows will not show our custom category at all if there is any entry which was removed
 			// by the user! See https://github.com/Microsoft/vscode/issues/15052
-			this.removeFromRecentPathsList(app.getJumpListSettings().removedItems.map(r => trim(r.args, '"')));
+			this.removeFromRecentlyOpened(app.getJumpListSettings().removedItems.filter(r => !!r.args).map(r => trim(r.args, '"')));
 
 			// Add entries
 			jumpList.push({
 				type: 'custom',
-				name: nls.localize('recentFolders', "Recent Folders"),
-				items: this.getRecentPathsList().folders.slice(0, 7 /* limit number of entries here */).map(folder => {
+				name: nls.localize('recentFolders', "Recent Workspaces"),
+				items: this.getRecentlyOpened().workspaces.slice(0, 7 /* limit number of entries here */).map(workspace => {
+					const title = isSingleFolderWorkspaceIdentifier(workspace) ? getBaseLabel(workspace) : getWorkspaceLabel(workspace, this.environmentService);
+					const description = isSingleFolderWorkspaceIdentifier(workspace) ? nls.localize('folderDesc', "{0} {1}", getBaseLabel(workspace), getPathLabel(path.dirname(workspace))) : nls.localize('codeWorkspace', "Code Workspace");
+
 					return <Electron.JumpListItem>{
 						type: 'task',
-						title: path.basename(folder) || folder, // use the base name to show shorter entries in the list
-						description: nls.localize('folderDesc', "{0} {1}", path.basename(folder), getPathLabel(path.dirname(folder))),
+						title,
+						description,
 						program: process.execPath,
-						args: `"${folder}"`, // open folder (use quotes to support paths with whitespaces)
+						args: `"${isSingleFolderWorkspaceIdentifier(workspace) ? workspace : workspace.configPath}"`, // open folder (use quotes to support paths with whitespaces)
 						iconPath: 'explorer.exe', // simulate folder icon
 						iconIndex: 0
 					};
@@ -219,7 +277,7 @@ export class HistoryMainService implements IHistoryMainService {
 		try {
 			app.setJumpList(jumpList);
 		} catch (error) {
-			this.logService.log('#setJumpList', error); // since setJumpList is relatively new API, make sure to guard for errors
+			this.logService.warn('#setJumpList', error); // since setJumpList is relatively new API, make sure to guard for errors
 		}
 	}
 }

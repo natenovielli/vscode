@@ -9,96 +9,24 @@ import { IDisposable } from 'vs/base/common/lifecycle';
 import { guessMimeTypes } from 'vs/base/common/mime';
 import paths = require('vs/base/common/paths');
 import URI from 'vs/base/common/uri';
-import { ConfigurationSource, IConfigurationService } from 'vs/platform/configuration/common/configuration';
+import { IConfigurationService, ConfigurationTarget } from 'vs/platform/configuration/common/configuration';
 import { IKeybindingService, KeybindingSource } from 'vs/platform/keybinding/common/keybinding';
-import { ILifecycleService, ShutdownReason } from 'vs/platform/lifecycle/common/lifecycle';
-import { IStorageService } from 'vs/platform/storage/common/storage';
-import { ITelemetryService, ITelemetryExperiments, ITelemetryInfo, ITelemetryData } from 'vs/platform/telemetry/common/telemetry';
-import { ServicesAccessor } from 'vs/platform/instantiation/common/instantiation';
+import { ITelemetryService, ITelemetryInfo, ITelemetryData } from 'vs/platform/telemetry/common/telemetry';
 
-export const defaultExperiments: ITelemetryExperiments = {
-	mergeQuickLinks: false,
-	showTaskDocumentation: true
-};
-
-export const NullTelemetryService = {
-	_serviceBrand: undefined,
-	_experiments: defaultExperiments,
+export const NullTelemetryService = new class implements ITelemetryService {
+	_serviceBrand: undefined;
 	publicLog(eventName: string, data?: ITelemetryData) {
-		return TPromise.as<void>(null);
-	},
-	isOptedIn: true,
+		return TPromise.wrap<void>(null);
+	}
+	isOptedIn: true;
 	getTelemetryInfo(): TPromise<ITelemetryInfo> {
-		return TPromise.as({
+		return TPromise.wrap({
 			instanceId: 'someValue.instanceId',
 			sessionId: 'someValue.sessionId',
 			machineId: 'someValue.machineId'
 		});
-	},
-	getExperiments(): ITelemetryExperiments {
-		return this._experiments;
 	}
 };
-
-export function loadExperiments(accessor: ServicesAccessor): ITelemetryExperiments {
-	const storageService = accessor.get(IStorageService);
-	const configurationService = accessor.get(IConfigurationService);
-
-	let {
-		mergeQuickLinks,
-		showTaskDocumentation,
-	} = splitExperimentsRandomness(storageService);
-
-	return applyOverrides({
-		mergeQuickLinks,
-		showTaskDocumentation,
-	}, configurationService);
-}
-
-function applyOverrides(experiments: ITelemetryExperiments, configurationService: IConfigurationService): ITelemetryExperiments {
-	const experimentsConfig = getExperimentsOverrides(configurationService);
-	Object.keys(experiments).forEach(key => {
-		if (key in experimentsConfig) {
-			experiments[key] = experimentsConfig[key];
-		}
-	});
-	return experiments;
-}
-
-function splitExperimentsRandomness(storageService: IStorageService): ITelemetryExperiments {
-	const random1 = getExperimentsRandomness(storageService);
-	const [random2, showTaskDocumentation] = splitRandom(random1);
-	const [random3, /* openUntitledFile */] = splitRandom(random2);
-	const [random4, mergeQuickLinks] = splitRandom(random3);
-	// tslint:disable-next-line:no-unused-variable (https://github.com/Microsoft/TypeScript/issues/16628)
-	const [random5, /* enableWelcomePage */] = splitRandom(random4);
-	return {
-		mergeQuickLinks,
-		showTaskDocumentation,
-	};
-}
-
-function getExperimentsRandomness(storageService: IStorageService) {
-	const key = 'experiments.randomness';
-	let valueString = storageService.get(key);
-	if (!valueString) {
-		valueString = Math.random().toString();
-		storageService.store(key, valueString);
-	}
-
-	return parseFloat(valueString);
-}
-
-function splitRandom(random: number): [number, boolean] {
-	const scaled = random * 2;
-	const i = Math.floor(scaled);
-	return [scaled - i, i === 1];
-}
-
-function getExperimentsOverrides(configurationService: IConfigurationService): ITelemetryExperiments {
-	const config: any = configurationService.getConfiguration('telemetry');
-	return config && config.experiments || {};
-}
 
 export interface ITelemetryAppender {
 	log(eventName: string, data: any): void;
@@ -110,42 +38,22 @@ export function combinedAppender(...appenders: ITelemetryAppender[]): ITelemetry
 
 export const NullAppender: ITelemetryAppender = { log: () => null };
 
-// --- util
-
-export function anonymize(input: string): string {
-	if (!input) {
-		return input;
+/* __GDPR__FRAGMENT__
+	"URIDescriptor" : {
+		"mimeType" : { "classification": "SystemMetaData", "purpose": "FeatureInsight" },
+		"ext": { "classification": "SystemMetaData", "purpose": "FeatureInsight" },
+		"path": { "classification": "CustomerContent", "purpose": "FeatureInsight" }
 	}
-
-	let r = '';
-	for (let i = 0; i < input.length; i++) {
-		let ch = input[i];
-		if (ch >= '0' && ch <= '9') {
-			r += '0';
-			continue;
-		}
-		if (ch >= 'a' && ch <= 'z') {
-			r += 'a';
-			continue;
-		}
-		if (ch >= 'A' && ch <= 'Z') {
-			r += 'A';
-			continue;
-		}
-		r += ch;
-	}
-	return r;
-}
-
+*/
 export interface URIDescriptor {
 	mimeType?: string;
 	ext?: string;
 	path?: string;
 }
 
-export function telemetryURIDescriptor(uri: URI): URIDescriptor {
+export function telemetryURIDescriptor(uri: URI, hashPath: (path: string) => string): URIDescriptor {
 	const fsPath = uri && uri.fsPath;
-	return fsPath ? { mimeType: guessMimeTypes(fsPath).join(', '), ext: paths.extname(fsPath), path: anonymize(fsPath) } : {};
+	return fsPath ? { mimeType: guessMimeTypes(fsPath).join(', '), ext: paths.extname(fsPath), path: hashPath(fsPath) } : {};
 }
 
 /**
@@ -167,6 +75,7 @@ const configurationValueWhitelist = [
 	'editor.roundedSelection',
 	'editor.scrollBeyondLastLine',
 	'editor.minimap.enabled',
+	'editor.minimap.side',
 	'editor.minimap.renderCharacters',
 	'editor.minimap.maxColumn',
 	'editor.find.seedSearchStringFromSelection',
@@ -180,7 +89,7 @@ const configurationValueWhitelist = [
 	'editor.quickSuggestionsDelay',
 	'editor.parameterHints',
 	'editor.autoClosingBrackets',
-	'editor.autoindent',
+	'editor.autoIndent',
 	'editor.formatOnType',
 	'editor.formatOnPaste',
 	'editor.suggestOnTriggerCharacters',
@@ -189,6 +98,7 @@ const configurationValueWhitelist = [
 	'editor.snippetSuggestions',
 	'editor.emptySelectionClipboard',
 	'editor.wordBasedSuggestions',
+	'editor.suggestSelection',
 	'editor.suggestFontSize',
 	'editor.suggestLineHeight',
 	'editor.selectionHighlight',
@@ -214,11 +124,11 @@ const configurationValueWhitelist = [
 	'editor.stablePeek',
 	'editor.dragAndDrop',
 	'editor.formatOnSave',
+	'editor.colorDecorators',
 
 	'window.zoomLevel',
 	'files.autoSave',
 	'files.hotExit',
-	'typescript.check.tscVersion',
 	'files.associations',
 	'workbench.statusBar.visible',
 	'files.trimTrailingWhitespace',
@@ -226,7 +136,6 @@ const configurationValueWhitelist = [
 	'workbench.sideBar.location',
 	'window.openFilesInNewWindow',
 	'javascript.validate.enable',
-	'window.reopenFolders',
 	'window.restoreWindows',
 	'extensions.autoUpdate',
 	'files.eol',
@@ -245,32 +154,44 @@ const configurationValueWhitelist = [
 	'php.validate.enable',
 	'php.validate.run',
 	'workbench.welcome.enabled',
+	'workbench.startupEditor',
 ];
 
 export function configurationTelemetry(telemetryService: ITelemetryService, configurationService: IConfigurationService): IDisposable {
-	return configurationService.onDidUpdateConfiguration(event => {
-		if (event.source !== ConfigurationSource.Default) {
+	return configurationService.onDidChangeConfiguration(event => {
+		if (event.source !== ConfigurationTarget.DEFAULT) {
+			/* __GDPR__
+				"updateConfiguration" : {
+					"configurationSource" : { "classification": "SystemMetaData", "purpose": "FeatureInsight" },
+					"configurationKeys": { "classification": "SystemMetaData", "purpose": "FeatureInsight" }
+				}
+			*/
 			telemetryService.publicLog('updateConfiguration', {
-				configurationSource: ConfigurationSource[event.source],
+				configurationSource: ConfigurationTarget[event.source],
 				configurationKeys: flattenKeys(event.sourceConfig)
 			});
+			/* __GDPR__
+				"updateConfigurationValues" : {
+					"configurationSource" : { "classification": "SystemMetaData", "purpose": "FeatureInsight" },
+					"configurationValues": { "classification": "CustomerContent", "purpose": "FeatureInsight" }
+				}
+			*/
 			telemetryService.publicLog('updateConfigurationValues', {
-				configurationSource: ConfigurationSource[event.source],
+				configurationSource: ConfigurationTarget[event.source],
 				configurationValues: flattenValues(event.sourceConfig, configurationValueWhitelist)
 			});
 		}
 	});
 }
 
-export function lifecycleTelemetry(telemetryService: ITelemetryService, lifecycleService: ILifecycleService): IDisposable {
-	return lifecycleService.onShutdown(event => {
-		telemetryService.publicLog('shutdown', { reason: ShutdownReason[event] });
-	});
-}
-
 export function keybindingsTelemetry(telemetryService: ITelemetryService, keybindingService: IKeybindingService): IDisposable {
 	return keybindingService.onDidUpdateKeybindings(event => {
 		if (event.source === KeybindingSource.User && event.keybindings) {
+			/* __GDPR__
+				"updateKeybindings" : {
+					"bindings": { "classification": "CustomerContent", "purpose": "FeatureInsight" }
+				}
+			*/
 			telemetryService.publicLog('updateKeybindings', {
 				bindings: event.keybindings.map(binding => ({
 					key: binding.key,

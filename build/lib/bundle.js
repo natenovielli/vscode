@@ -31,6 +31,9 @@ function bundle(entryPoints, config, callback) {
     r.call({}, require, loaderModule, loaderModule.exports);
     var loader = loaderModule.exports;
     config.isBuild = true;
+    config.paths = config.paths || {};
+    config.paths['vs/nls'] = 'out-build/vs/nls.build';
+    config.paths['vs/css'] = 'out-build/vs/css.build';
     loader.config(config);
     loader(['require'], function (localRequire) {
         var resolvePath = function (path) {
@@ -214,6 +217,7 @@ function removeDuplicateTSBoilerplate(destFiles) {
         { start: /^var __metadata/, end: /^};$/ },
         { start: /^var __param/, end: /^};$/ },
         { start: /^var __awaiter/, end: /^};$/ },
+        { start: /^var __generator/, end: /^};$/ },
     ];
     destFiles.forEach(function (destFile) {
         var SEEN_BOILERPLATE = [];

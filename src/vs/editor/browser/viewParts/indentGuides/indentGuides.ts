@@ -13,6 +13,7 @@ import * as viewEvents from 'vs/editor/common/view/viewEvents';
 import { registerThemingParticipant } from 'vs/platform/theme/common/themeService';
 import { editorIndentGuides } from 'vs/editor/common/view/editorColorRegistry';
 import * as dom from 'vs/base/browser/dom';
+import { Position } from 'vs/editor/common/core/position';
 
 export class IndentGuidesOverlay extends DynamicViewOverlay {
 
@@ -54,6 +55,10 @@ export class IndentGuidesOverlay extends DynamicViewOverlay {
 		}
 		return true;
 	}
+	public onDecorationsChanged(e: viewEvents.ViewDecorationsChangedEvent): boolean {
+		// true for inline decorations
+		return true;
+	}
 	public onFlushed(e: viewEvents.ViewFlushedEvent): boolean {
 		return true;
 	}
@@ -72,6 +77,9 @@ export class IndentGuidesOverlay extends DynamicViewOverlay {
 	public onZonesChanged(e: viewEvents.ViewZonesChangedEvent): boolean {
 		return true;
 	}
+	public onLanguageConfigurationChanged(e: viewEvents.ViewLanguageConfigurationEvent): boolean {
+		return true;
+	}
 
 	// --- end event handlers
 
@@ -88,13 +96,16 @@ export class IndentGuidesOverlay extends DynamicViewOverlay {
 		const lineHeight = this._lineHeight;
 		const indentGuideWidth = dom.computeScreenAwareSize(1);
 
+		const indents = this._context.model.getLinesIndentGuides(visibleStartLineNumber, visibleEndLineNumber);
+
 		let output: string[] = [];
 		for (let lineNumber = visibleStartLineNumber; lineNumber <= visibleEndLineNumber; lineNumber++) {
-			let lineIndex = lineNumber - visibleStartLineNumber;
-			let indent = this._context.model.getLineIndentGuide(lineNumber);
+			const lineIndex = lineNumber - visibleStartLineNumber;
+			const indent = indents[lineIndex];
 
 			let result = '';
-			let left = 0;
+			let leftMostVisiblePosition = ctx.visibleRangeForPosition(new Position(lineNumber, 1));
+			let left = leftMostVisiblePosition ? leftMostVisiblePosition.left : 0;
 			for (let i = 0; i < indent; i++) {
 				result += `<div class="cigr" style="left:${left}px;height:${lineHeight}px;width:${indentGuideWidth}px"></div>`;
 				left += tabWidth;
@@ -111,7 +122,7 @@ export class IndentGuidesOverlay extends DynamicViewOverlay {
 		}
 		let lineIndex = lineNumber - startLineNumber;
 		if (lineIndex < 0 || lineIndex >= this._renderResult.length) {
-			throw new Error('Unexpected render request');
+			return '';
 		}
 		return this._renderResult[lineIndex];
 	}

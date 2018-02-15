@@ -10,7 +10,7 @@ import { TPromise } from 'vs/base/common/winjs.base';
 import { onUnexpectedError } from 'vs/base/common/errors';
 import { ThrottledDelayer } from 'vs/base/common/async';
 import { QuickOpenHandler, EditorQuickOpenEntry } from 'vs/workbench/browser/quickopen';
-import { QuickOpenModel, QuickOpenEntry } from 'vs/base/parts/quickopen/browser/quickOpenModel';
+import { QuickOpenModel, QuickOpenEntry, compareEntries } from 'vs/base/parts/quickopen/browser/quickOpenModel';
 import { IAutoFocus, Mode, IEntryRunContext } from 'vs/base/parts/quickopen/common/quickOpen';
 import filters = require('vs/base/common/filters');
 import strings = require('vs/base/common/strings');
@@ -34,10 +34,10 @@ class SymbolEntry extends EditorQuickOpenEntry {
 	constructor(
 		private _bearing: SymbolInformation,
 		private _provider: IWorkspaceSymbolProvider,
-		@IConfigurationService private _configurationService: IConfigurationService,
-		@IWorkspaceContextService private _contextService: IWorkspaceContextService,
+		@IConfigurationService private readonly _configurationService: IConfigurationService,
+		@IWorkspaceContextService private readonly _contextService: IWorkspaceContextService,
 		@IWorkbenchEditorService editorService: IWorkbenchEditorService,
-		@IEnvironmentService private _environmentService: IEnvironmentService
+		@IEnvironmentService private readonly _environmentService: IEnvironmentService
 	) {
 		super(editorService);
 	}
@@ -86,7 +86,7 @@ class SymbolEntry extends EditorQuickOpenEntry {
 
 		TPromise.as(this._bearingResolve)
 			.then(_ => super.run(mode, context))
-			.done(undefined, onUnexpectedError);
+			.then(undefined, onUnexpectedError);
 
 		// hide if OPEN
 		return mode === Mode.OPEN;
@@ -96,7 +96,7 @@ class SymbolEntry extends EditorQuickOpenEntry {
 		let input: IResourceInput = {
 			resource: this._bearing.location.uri,
 			options: {
-				pinned: !this._configurationService.getConfiguration<IWorkbenchEditorConfiguration>().workbench.editor.enablePreviewFromQuickOpen
+				pinned: !this._configurationService.getValue<IWorkbenchEditorConfiguration>().workbench.editor.enablePreviewFromQuickOpen
 			}
 		};
 
@@ -118,7 +118,7 @@ class SymbolEntry extends EditorQuickOpenEntry {
 			return elementAType.localeCompare(elementBType);
 		}
 
-		return QuickOpenEntry.compare(elementA, elementB, searchValue);
+		return compareEntries(elementA, elementB, searchValue);
 	}
 }
 
@@ -130,7 +130,9 @@ export interface IOpenSymbolOptions {
 
 export class OpenSymbolHandler extends QuickOpenHandler {
 
-	private static SEARCH_DELAY = 500; // This delay accommodates for the user typing a word and then stops typing to start searching
+	public static readonly ID = 'workbench.picker.symbols';
+
+	private static readonly SEARCH_DELAY = 500; // This delay accommodates for the user typing a word and then stops typing to start searching
 
 	private delayer: ThrottledDelayer<QuickOpenEntry[]>;
 	private options: IOpenSymbolOptions;

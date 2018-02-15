@@ -333,8 +333,8 @@ suite('ExtHostTypes', function () {
 
 	test('WorkspaceEdit', function () {
 
-		let a = types.Uri.file('a.ts');
-		let b = types.Uri.file('b.ts');
+		let a = URI.file('a.ts');
+		let b = URI.file('b.ts');
 
 		let edit = new types.WorkspaceEdit();
 		assert.ok(!edit.has(a));
@@ -362,6 +362,53 @@ suite('ExtHostTypes', function () {
 
 	});
 
+	// test('WorkspaceEdit should fail when editing deleted resource', () => {
+	// 	const resource = URI.parse('file:///a.ts');
+
+	// 	const edit = new types.WorkspaceEdit();
+	// 	edit.deleteResource(resource);
+	// 	try {
+	// 		edit.insert(resource, new types.Position(0, 0), '');
+	// 		assert.fail(false, 'Should disallow edit of deleted resource');
+	// 	} catch {
+	// 		// expected
+	// 	}
+	// });
+
+	// test('WorkspaceEdit - keep order of text and file changes', function () {
+
+	// 	const edit = new types.WorkspaceEdit();
+	// 	edit.replace(URI.parse('foo:a'), new types.Range(1, 1, 1, 1), 'foo');
+	// 	edit.renameResource(URI.parse('foo:a'), URI.parse('foo:b'));
+	// 	edit.replace(URI.parse('foo:a'), new types.Range(2, 1, 2, 1), 'bar');
+	// 	edit.replace(URI.parse('foo:b'), new types.Range(3, 1, 3, 1), 'bazz');
+
+	// 	const all = edit.allEntries();
+	// 	assert.equal(all.length, 3);
+
+	// 	function isFileChange(thing: [URI, types.TextEdit[]] | [URI, URI]): thing is [URI, URI] {
+	// 		const [f, s] = thing;
+	// 		return URI.isUri(f) && URI.isUri(s);
+	// 	}
+
+	// 	function isTextChange(thing: [URI, types.TextEdit[]] | [URI, URI]): thing is [URI, types.TextEdit[]] {
+	// 		const [f, s] = thing;
+	// 		return URI.isUri(f) && Array.isArray(s);
+	// 	}
+
+	// 	const [first, second, third] = all;
+	// 	assert.equal(first[0].toString(), 'foo:a');
+	// 	assert.ok(!isFileChange(first));
+	// 	assert.ok(isTextChange(first) && first[1].length === 2);
+
+	// 	assert.equal(second[0].toString(), 'foo:a');
+	// 	assert.ok(isFileChange(second));
+
+	// 	assert.equal(third[0].toString(), 'foo:b');
+	// 	assert.ok(!isFileChange(third));
+	// 	assert.ok(isTextChange(third) && third[1].length === 1);
+	// });
+
 	test('DocumentLink', function () {
 		assert.throws(() => new types.DocumentLink(null, null));
 		assert.throws(() => new types.DocumentLink(new types.Range(1, 1, 1, 1), null));
@@ -371,8 +418,8 @@ suite('ExtHostTypes', function () {
 
 		assertToJSON(new types.Selection(3, 4, 2, 1), { start: { line: 2, character: 1 }, end: { line: 3, character: 4 }, anchor: { line: 3, character: 4 }, active: { line: 2, character: 1 } });
 
-		assertToJSON(new types.Location(types.Uri.file('u.ts'), new types.Position(3, 4)), { uri: URI.parse('file:///u.ts').toJSON(), range: [{ line: 3, character: 4 }, { line: 3, character: 4 }] });
-		assertToJSON(new types.Location(types.Uri.file('u.ts'), new types.Range(1, 2, 3, 4)), { uri: URI.parse('file:///u.ts').toJSON(), range: [{ line: 1, character: 2 }, { line: 3, character: 4 }] });
+		assertToJSON(new types.Location(URI.file('u.ts'), new types.Position(3, 4)), { uri: URI.parse('file:///u.ts').toJSON(), range: [{ line: 3, character: 4 }, { line: 3, character: 4 }] });
+		assertToJSON(new types.Location(URI.file('u.ts'), new types.Range(1, 2, 3, 4)), { uri: URI.parse('file:///u.ts').toJSON(), range: [{ line: 1, character: 2 }, { line: 3, character: 4 }] });
 
 		let diag = new types.Diagnostic(new types.Range(0, 1, 2, 3), 'hello');
 		assertToJSON(diag, { severity: 'Error', message: 'hello', range: [{ line: 0, character: 1 }, { line: 2, character: 3 }] });

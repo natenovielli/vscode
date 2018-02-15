@@ -29,16 +29,16 @@
 	background: rgba(206, 231, 206, 1);
 }
 
-.monaco-editor .debug-breakpoint-hint-glyph {
+.debug-breakpoint-hint-glyph {
 	background: url('breakpoint-hint.svg') center center no-repeat;
 }
 
-.monaco-editor .debug-breakpoint-disabled-glyph,
+.debug-breakpoint-disabled-glyph,
 .monaco-editor .debug-breakpoint-column.debug-breakpoint-disabled-glyph-column::before {
 	background: url('breakpoint-disabled.svg') center center no-repeat;
 }
 
-.monaco-editor .debug-breakpoint-unverified-glyph,
+.debug-breakpoint-unverified-glyph,
 .monaco-editor .debug-breakpoint-column.debug-breakpoint-unverified-glyph-column::before {
 	background: url('breakpoint-unverified.svg') center center no-repeat;
 }
@@ -51,7 +51,7 @@
 	background: url('stackframe-arrow.svg') center center no-repeat;
 }
 
-.monaco-editor .debug-breakpoint-glyph,
+.debug-breakpoint-glyph,
 .monaco-editor .debug-breakpoint-column.debug-breakpoint-glyph-column::before {
 	background: url('breakpoint.svg') center center no-repeat;
 }
@@ -68,12 +68,12 @@
 	background-position: initial !important;
 }
 
-.monaco-editor .debug-breakpoint-conditional-glyph,
+.debug-breakpoint-conditional-glyph,
 .monaco-editor .debug-breakpoint-column.debug-breakpoint-conditional-glyph-column::before {
 	background: url('breakpoint-conditional.svg') center center no-repeat;
 }
 
-.monaco-editor .debug-breakpoint-unsupported-glyph,
+.debug-breakpoint-unsupported-glyph,
 .monaco-editor .debug-breakpoint-column.debug-breakpoint-unsupported-glyph-column::before {
 	background: url('breakpoint-unsupported.svg') center center no-repeat;
 }
@@ -102,6 +102,25 @@
 	box-sizing: border-box;
 }
 
+/* Debug status */
+/* A very precise css rule to overwrite the display set in statusbar.css */
+.monaco-workbench > .part.statusbar > .statusbar-item > .debug-statusbar-item > a:not([disabled]):not(.disabled) {
+	display: flex;
+	padding: 0 5px 0 5px;
+}
+
+.monaco-workbench .part.statusbar .debug-statusbar-item.hidden {
+	display: none;
+}
+
+.monaco-workbench .part.statusbar .debug-statusbar-item .icon {
+	-webkit-mask: url('continue.svg') no-repeat 50% 50%;
+	-webkit-mask-size: 16px;
+	display: inline-block;
+	padding-right: 2px;
+	width: 16px;
+}
+
 /* Expressions */
 
 .monaco-workbench .monaco-tree-row .expression {
@@ -125,6 +144,10 @@
 
 .monaco-workbench .monaco-tree-row:not(.selected) .expression .name {
 	color: #9B46B0;
+}
+
+.monaco-workbench .monaco-tree-row:not(.selected) .expression .name.virtual {
+	opacity: 0.5;
 }
 
 .monaco-workbench > .monaco-tree-row:not(.selected) .expression .value {
@@ -210,27 +233,27 @@
 	background-color: rgba(255, 255, 0, 0.3)
 }
 
-.monaco-editor.vs-dark .debug-breakpoint-glyph,
+.vs-dark .debug-breakpoint-glyph,
 .monaco-editor.vs-dark .debug-breakpoint-column.debug-breakpoint-glyph-column::before {
 	background: url('breakpoint-dark.svg') center center no-repeat;
 }
 
-.monaco-editor.vs-dark .debug-breakpoint-conditional-glyph,
+.vs-dark .debug-breakpoint-conditional-glyph,
 .monaco-editor.vs-dark .debug-breakpoint-column.debug-breakpoint-conditional-glyph-column::before {
 	background: url('breakpoint-conditional-dark.svg') center center no-repeat;
 }
 
-.monaco-editor.vs-dark .debug-breakpoint-unsupported-glyph,
+.vs-dark .debug-breakpoint-unsupported-glyph,
 .monaco-editor.vs-dark .debug-breakpoint-column.debug-breakpoint-unsupported-glyph-column::before {
 	background: url('breakpoint-unsupported-dark.svg') center center no-repeat;
 }
 
-.monaco-editor.vs-dark .debug-breakpoint-disabled-glyph,
+.vs-dark .debug-breakpoint-disabled-glyph,
 .monaco-editor.vs-dark .debug-breakpoint-column.debug-breakpoint-disabled-glyph-column::before {
 	background: url('breakpoint-disabled-dark.svg') center center no-repeat;
 }
 
-.monaco-editor.vs-dark .debug-breakpoint-unverified-glyph,
+.vs-dark .debug-breakpoint-unverified-glyph,
 .monaco-editor.vs-dark .debug-breakpoint-column.debug-breakpoint-unverified-glyph-column::before {
 	background: url('breakpoint-unverified-dark.svg') center center no-repeat;
 }
@@ -255,6 +278,9 @@
 }
 
 .hc-black .monaco-editor .debug-top-stack-frame-line {
-	background: rgba(255, 246, 0, .8);
-	mix-blend-mode: lighten; /* Preserves text selection's contrast */
+	background: rgba(255, 246, 0, 1);
+}
+
+.hc-black .monaco-editor .debug-remove-token-colors {
+	color:black;
 }

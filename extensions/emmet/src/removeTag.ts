@@ -4,37 +4,51 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
-import { getOpenCloseRange } from './util';
+import { parseDocument, validate, getNode } from './util';
+import { HtmlNode } from 'EmmetNode';
 
 export function removeTag() {
-	let editor = vscode.window.activeTextEditor;
-	if (!editor) {
-		vscode.window.showInformationMessage('No editor is active');
+	if (!validate(false) || !vscode.window.activeTextEditor) {
+		return;
+	}
+	const editor = vscode.window.activeTextEditor;
+
+	let rootNode = <HtmlNode>parseDocument(editor.document);
+	if (!rootNode) {
 		return;
 	}
 
 	let indentInSpaces = '';
-	for (let i = 0; i < editor.options.tabSize; i++) {
+	const tabSize: number = editor.options.tabSize ? +editor.options.tabSize : 0;
+	for (let i = 0; i < tabSize || 0; i++) {
 		indentInSpaces += ' ';
 	}
 
-	let rangesToRemove = [];
+	let rangesToRemove: vscode.Range[] = [];
 	editor.selections.reverse().forEach(selection => {
-		rangesToRemove = rangesToRemove.concat(getRangeToRemove(editor, selection, indentInSpaces));
+		rangesToRemove = rangesToRemove.concat(getRangeToRemove(editor, rootNode, selection, indentInSpaces));
 	});
 
-	editor.edit(editBuilder => {
+	return editor.edit(editBuilder => {
 		rangesToRemove.forEach(range => {
 			editBuilder.replace(range, '');
 		});
 	});
 }
 
-function getRangeToRemove(editor: vscode.TextEditor, selection: vscode.Selection, indentInSpaces: string): vscode.Range[] {
-	let [openRange, closeRange] = getOpenCloseRange(editor.document, selection.start);
-	if (!openRange.contains(selection.start) && !closeRange.contains(selection.start)) {
+function getRangeToRemove(editor: vscode.TextEditor, rootNode: HtmlNode, selection: vscode.Selection, indentInSpaces: string): vscode.Range[] {
+
+	let nodeToUpdate = <HtmlNode>getNode(rootNode, selection.start);
+	if (!nodeToUpdate) {
 		return [];
 	}
+
+	let openRange = new vscode.Range(nodeToUpdate.open.start, nodeToUpdate.open.end);
+	let closeRange: vscode.Range | null = null;
+	if (nodeToUpdate.close) {
+		closeRange = new vscode.Range(nodeToUpdate.close.start, nodeToUpdate.close.end);
+	}
+
 	let ranges = [openRange];
 	if (closeRange) {
 		for (let i = openRange.start.line + 1; i <= closeRange.start.line; i++) {
@@ -49,5 +63,4 @@ function getRangeToRemove(editor: vscode.TextEditor, selection: vscode.Selection
 	}
 	return ranges;
 }
-
 

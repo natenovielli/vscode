@@ -4,33 +4,32 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
-import { isStyleSheet, getNode } from './util';
-import parse from '@emmetio/html-matcher';
-import Node from '@emmetio/node';
-import { DocumentStreamReader } from './bufferStream';
+import { HtmlNode } from 'EmmetNode';
+import { getNode, parseDocument, validate } from './util';
 
 export function splitJoinTag() {
-	let editor = vscode.window.activeTextEditor;
-	if (!editor) {
-		vscode.window.showInformationMessage('No editor is active');
-		return;
-	}
-	if (isStyleSheet(editor.document.languageId)) {
+	if (!validate(false) || !vscode.window.activeTextEditor) {
 		return;
 	}
 
-	let rootNode: Node = parse(new DocumentStreamReader(editor.document));
+	const editor = vscode.window.activeTextEditor;
+	let rootNode = <HtmlNode>parseDocument(editor.document);
+	if (!rootNode) {
+		return;
+	}
 
-	editor.edit(editBuilder => {
+	return editor.edit(editBuilder => {
 		editor.selections.reverse().forEach(selection => {
-			let [rangeToReplace, textToReplaceWith] = getRangesToReplace(editor.document, selection, rootNode);
-			editBuilder.replace(rangeToReplace, textToReplaceWith);
+			let nodeToUpdate = <HtmlNode>getNode(rootNode, selection.start);
+			if (nodeToUpdate) {
+				let textEdit = getRangesToReplace(editor.document, nodeToUpdate);
+				editBuilder.replace(textEdit.range, textEdit.newText);
+			}
 		});
 	});
 }
 
-function getRangesToReplace(document: vscode.TextDocument, selection: vscode.Selection, rootNode: Node): [vscode.Range, string] {
-	let nodeToUpdate: Node = getNode(rootNode, selection.start);
+function getRangesToReplace(document: vscode.TextDocument, nodeToUpdate: HtmlNode): vscode.TextEdit {
 	let rangeToReplace: vscode.Range;
 	let textToReplaceWith: string;
 
@@ -51,5 +50,5 @@ function getRangesToReplace(document: vscode.TextDocument, selection: vscode.Sel
 		textToReplaceWith = '/>';
 	}
 
-	return [rangeToReplace, textToReplaceWith];
+	return new vscode.TextEdit(rangeToReplace, textToReplaceWith);
 }

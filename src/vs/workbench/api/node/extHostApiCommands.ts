@@ -10,12 +10,13 @@ import { IDisposable } from 'vs/base/common/lifecycle';
 import * as vscode from 'vscode';
 import * as typeConverters from 'vs/workbench/api/node/extHostTypeConverters';
 import * as types from 'vs/workbench/api/node/extHostTypes';
-import { ISingleEditOperation } from 'vs/editor/common/editorCommon';
+import { ISingleEditOperation } from 'vs/editor/common/model';
 import * as modes from 'vs/editor/common/modes';
 import { ICommandHandlerDescription } from 'vs/platform/commands/common/commands';
 import { ExtHostCommands } from 'vs/workbench/api/node/extHostCommands';
 import { IWorkspaceSymbolProvider } from 'vs/workbench/parts/search/common/search';
-import { IEditorOptions } from 'vs/platform/editor/common/editor';
+import { Position as EditorPosition, ITextEditorOptions } from 'vs/platform/editor/common/editor';
+import { CustomCodeAction } from 'vs/workbench/api/node/extHostLanguageFeatures';
 
 export class ExtHostApiCommands {
 
@@ -161,11 +162,12 @@ export class ExtHostApiCommands {
 			returns: 'A promise that resolves to an array of DocumentLink-instances.'
 		});
 
-		this._register('vscode.previewHtml', (uri: URI, position?: vscode.ViewColumn, label?: string) => {
+		this._register('vscode.previewHtml', (uri: URI, position?: vscode.ViewColumn, label?: string, options?: any) => {
 			return this._commands.executeCommand('_workbench.previewHtml',
 				uri,
 				typeof position === 'number' && typeConverters.fromViewColumn(position),
-				label);
+				label,
+				options);
 		}, {
 				description: `
 					Render the html of the resource in an editor view.
@@ -175,7 +177,8 @@ export class ExtHostApiCommands {
 				args: [
 					{ name: 'uri', description: 'Uri of the resource to preview.', constraint: value => value instanceof URI || typeof value === 'string' },
 					{ name: 'column', description: '(optional) Column in which to preview.', constraint: value => typeof value === 'undefined' || (typeof value === 'number' && typeof types.ViewColumn[value] === 'string') },
-					{ name: 'label', description: '(optional) An human readable string that is used as title for the preview.', constraint: v => typeof v === 'string' || typeof v === 'undefined' }
+					{ name: 'label', description: '(optional) An human readable string that is used as title for the preview.', constraint: v => typeof v === 'string' || typeof v === 'undefined' },
+					{ name: 'options', description: '(optional) Options for controlling webview environment.', constraint: v => typeof v === 'object' || typeof v === 'undefined' }
 				]
 			});
 
@@ -186,37 +189,19 @@ export class ExtHostApiCommands {
 
 			return this._commands.executeCommand('_files.windowOpen', [uri.fsPath], forceNewWindow);
 		}, {
-				description: 'Open a folder in the current window or new window depending on the newWindow argument. Note that opening in the same window will shutdown the current extension host process and start a new one on the given folder unless the newWindow parameter is set to true.',
+				description: 'Open a folder or workspace in the current window or new window depending on the newWindow argument. Note that opening in the same window will shutdown the current extension host process and start a new one on the given folder/workspace unless the newWindow parameter is set to true.',
 				args: [
-					{ name: 'uri', description: '(optional) Uri of the folder to open. If not provided, a native dialog will ask the user for the folder', constraint: value => value === void 0 || value instanceof URI },
-					{ name: 'newWindow', description: '(optional) Whether to open the folder in a new window or the same. Defaults to opening in the same window.', constraint: value => value === void 0 || typeof value === 'boolean' }
-				]
-			});
-
-		this._register('vscode.startDebug', (configuration?: any) => {
-			return this._commands.executeCommand('_workbench.startDebug', configuration);
-		}, {
-				description: 'Start a debugging session.',
-				args: [
-					{ name: 'configuration', description: '(optional) Name of the debug configuration from \'launch.json\' to use. Or a configuration json object to use.' }
+					{ name: 'uri', description: '(optional) Uri of the folder or workspace file to open. If not provided, a native dialog will ask the user for the folder', constraint: value => value === void 0 || value instanceof URI },
+					{ name: 'newWindow', description: '(optional) Whether to open the folder/workspace in a new window or the same. Defaults to opening in the same window.', constraint: value => value === void 0 || typeof value === 'boolean' }
 				]
 			});
 
 		this._register('vscode.diff', (left: URI, right: URI, label: string, options?: vscode.TextDocumentShowOptions) => {
-
-			let editorOptions: IEditorOptions;
-			if (options) {
-				editorOptions = {
-					pinned: !options.preview,
-					preserveFocus: options.preserveFocus
-				};
-			}
-
 			return this._commands.executeCommand('_workbench.diff', [
 				left, right,
 				label,
 				undefined,
-				editorOptions,
+				typeConverters.toTextEditorOptions(options),
 				options ? typeConverters.fromViewColumn(options.viewColumn) : undefined
 			]);
 		}, {
@@ -229,13 +214,38 @@ export class ExtHostApiCommands {
 				]
 			});
 
-		this._register('vscode.open', (resource: URI, column: vscode.ViewColumn) => {
-			return this._commands.executeCommand('_workbench.open', [resource, typeConverters.fromViewColumn(column)]);
+		this._register('vscode.open', (resource: URI, columnOrOptions?: vscode.ViewColumn | vscode.TextDocumentShowOptions) => {
+			let options: ITextEditorOptions;
+			let column: EditorPosition;
+
+			if (columnOrOptions) {
+				if (typeof columnOrOptions === 'number') {
+					column = typeConverters.fromViewColumn(columnOrOptions);
+				} else {
+					options = typeConverters.toTextEditorOptions(columnOrOptions);
+					column = typeConverters.fromViewColumn(columnOrOptions.viewColumn);
+				}
+			}
+
+			return this._commands.executeCommand('_workbench.open', [
+				resource,
+				options,
+				column
+			]);
 		}, {
-				description: 'Opens the provided resource in the editor. Can be a text or binary file, or a http(s) url',
+				description: 'Opens the provided resource in the editor. Can be a text or binary file, or a http(s) url. If you need more control over the options for opening a text file, use vscode.window.showTextDocument instead.',
 				args: [
 					{ name: 'resource', description: 'Resource to open', constraint: URI },
-					{ name: 'column', description: '(optional) Column in which to open', constraint: v => v === void 0 || typeof v === 'number' }
+					{ name: 'columnOrOptions', description: '(optional) Either the column in which to open or editor options, see vscode.TextDocumentShowOptions', constraint: v => v === void 0 || typeof v === 'number' || typeof v === 'object' }
+				]
+			});
+
+		this._register('vscode.removeFromRecentlyOpened', (path: string) => {
+			return this._commands.executeCommand('_workbench.removeFromRecentlyOpened', path);
+		}, {
+				description: 'Removes an entry with the given path from the recently opened list.',
+				args: [
+					{ name: 'path', description: 'Path to remove from recently opened.', constraint: value => typeof value === 'string' }
 				]
 			});
 	}
@@ -341,13 +351,9 @@ export class ExtHostApiCommands {
 				return undefined;
 			}
 			if (value.rejectReason) {
-				return TPromise.wrapError<types.WorkspaceEdit>(value.rejectReason);
+				return TPromise.wrapError<types.WorkspaceEdit>(new Error(value.rejectReason));
 			}
-			let workspaceEdit = new types.WorkspaceEdit();
-			for (let edit of value.edits) {
-				workspaceEdit.replace(edit.resource, typeConverters.toRange(edit.range), edit.newText);
-			}
-			return workspaceEdit;
+			return typeConverters.WorkspaceEdit.to(value);
 		});
 	}
 
@@ -392,16 +398,29 @@ export class ExtHostApiCommands {
 		});
 	}
 
-	private _executeCodeActionProvider(resource: URI, range: types.Range): Thenable<vscode.Command[]> {
+	private _executeCodeActionProvider(resource: URI, range: types.Range): Thenable<(vscode.CodeAction | vscode.Command)[]> {
 		const args = {
 			resource,
 			range: typeConverters.fromRange(range)
 		};
-		return this._commands.executeCommand<modes.CodeAction[]>('_executeCodeActionProvider', args).then(value => {
+		return this._commands.executeCommand<CustomCodeAction[]>('_executeCodeActionProvider', args).then(value => {
 			if (!Array.isArray(value)) {
 				return undefined;
 			}
-			return value.map(quickFix => this._commands.converter.fromInternal(quickFix.command));
+			return value.map(codeAction => {
+				if (codeAction._isSynthetic) {
+					return this._commands.converter.fromInternal(codeAction.command);
+				} else {
+					const ret = new types.CodeAction(
+						codeAction.title,
+						codeAction.kind ? new types.CodeActionKind(codeAction.kind) : undefined
+					);
+					if (codeAction.edit) {
+						ret.edit = typeConverters.WorkspaceEdit.to(codeAction.edit);
+					}
+					return ret;
+				}
+			});
 		});
 	}
 
